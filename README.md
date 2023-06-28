@@ -7,6 +7,7 @@ Open Neural Network Exchange (ONNX) compatible implementation of [LightGlue: Loc
 ## Updates
 
 - **28 June 2023**: Add end-to-end SuperPoint+LightGlue export & inference pipeline.
+
 ## ONNX Export
 
 Prior to exporting the ONNX models, please install the [requirements](./requirements.txt) of the original LightGlue repository. ([Flash Attention](https://github.com/HazyResearch/flash-attention) does not need to be installed.)
