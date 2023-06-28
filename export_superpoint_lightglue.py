@@ -3,7 +3,8 @@ import argparse
 import torch
 
 from lightglue_onnx import LightGlue, SuperPoint
-from lightglue_onnx.utils import load_image
+from lightglue_onnx.superpoint_lightglue_end2end import normalize_keypoints
+from lightglue_onnx.utils import load_image, rgb_to_grayscale
 
 
 def parse_args() -> argparse.Namespace:
@@ -31,6 +32,8 @@ def export_onnx(
     # Sample images for tracing
     image0, scales0 = load_image(img0_path, resize=img_size)
     image1, scales1 = load_image(img1_path, resize=img_size)
+    image0 = rgb_to_grayscale(image0)
+    image1 = rgb_to_grayscale(image1)
 
     # Models
     extractor = SuperPoint().eval()
@@ -46,9 +49,9 @@ def export_onnx(
         opset_version=16,
         dynamic_axes={
             "image": {2: "height", 3: "width"},
-            "keypoints": {0: "num_keypoints"},
-            "scores": {0: "num_scores"},
-            "descriptors": {0: "num_descriptors"},
+            "keypoints": {1: "num_keypoints"},
+            "scores": {1: "num_keypoints"},
+            "descriptors": {1: "num_keypoints"},
         },
     )
 
@@ -57,27 +60,30 @@ def export_onnx(
     kpts0, scores0, desc0 = feats0
     kpts1, scores1, desc1 = feats1
 
+    kpts0 = normalize_keypoints(kpts0, image0.shape[1], image0.shape[2])
+    kpts1 = normalize_keypoints(kpts1, image1.shape[1], image1.shape[2])
+
     torch.onnx.export(
         matcher,
         (
-            kpts0[None],
-            kpts1[None],
-            desc0[None],
-            desc1[None],
-            image0[None],
-            image1[None],
+            kpts0,
+            kpts1,
+            desc0,
+            desc1,
         ),
         lightglue_path,
-        input_names=["kpts0", "kpts1", "desc0", "desc1", "image0", "image1"],
+        input_names=["kpts0", "kpts1", "desc0", "desc1"],
         output_names=["matches0", "matches1", "mscores0", "mscores1"],
         opset_version=16,
         dynamic_axes={
-            "kpts0": {1: "num_kpts0"},
-            "kpts1": {1: "num_kpts1"},
-            "desc0": {1: "num_desc0"},
-            "desc1": {1: "num_desc1"},
-            "image0": {2: "height_0", 3: "width_0"},
-            "image1": {2: "height_1", 3: "width_1"},
+            "kpts0": {1: "num_keypoints0"},
+            "kpts1": {1: "num_keypoints1"},
+            "desc0": {1: "num_keypoints0"},
+            "desc1": {1: "num_keypoints1"},
+            "matches0": {1: "num_matches0"},
+            "matches1": {1: "num_matches1"},
+            "mscores0": {1: "num_matches0"},
+            "mscores1": {1: "num_matches1"},
         },
     )
 

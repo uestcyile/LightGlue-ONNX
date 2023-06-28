@@ -69,6 +69,13 @@ def load_image(
     return numpy_image_to_torch(img), torch.Tensor(scales)
 
 
+def rgb_to_grayscale(image: torch.Tensor) -> torch.Tensor:
+    """Convert an RGB image to grayscale."""
+    scale = image.new_tensor([0.299, 0.587, 0.114]).view(3, 1, 1)
+    image = (image * scale).sum(-3, keepdim=True)
+    return image
+
+
 def match_pair(extractor, matcher, image0, image1, scales0=None, scales1=None):
     device = image0.device
     data = {"image0": image0[None].cuda(), "image1": image1[None].cuda()}

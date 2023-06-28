@@ -285,18 +285,13 @@ class LightGlue(nn.Module):
 
     def forward(
         self,
-        kpts0_: torch.Tensor,
-        kpts1_: torch.Tensor,
+        kpts0: torch.Tensor,
+        kpts1: torch.Tensor,
         desc0: torch.Tensor,
         desc1: torch.Tensor,
-        image0: torch.Tensor,
-        image1: torch.Tensor,
     ):
-        b, m, _ = kpts0_.shape
-        b, n, _ = kpts1_.shape
-
-        kpts0 = self.normalize_keypoints(kpts0_, image0)
-        kpts1 = self.normalize_keypoints(kpts1_, image1)
+        b, m, _ = kpts0.shape
+        b, n, _ = kpts1.shape
 
         if False:  # torch.is_autocast_enabled():
             desc0 = desc0.half()

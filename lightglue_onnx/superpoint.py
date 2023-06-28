@@ -68,8 +68,8 @@ def simple_nms(scores, nms_radius: int):
 
 def remove_borders(keypoints, scores, border: int, height: int, width: int):
     """Removes keypoints too close to the border"""
-    mask_h = (keypoints[:, 0] >= border) & (keypoints[:, 0] < (height - border))
-    mask_w = (keypoints[:, 1] >= border) & (keypoints[:, 1] < (width - border))
+    mask_h = (keypoints[:, 1] >= border) & (keypoints[:, 1] < (height - border))
+    mask_w = (keypoints[:, 2] >= border) & (keypoints[:, 2] < (width - border))
     mask = mask_h & mask_w
     return keypoints[mask], scores[mask]
 
@@ -152,13 +152,9 @@ class SuperPoint(nn.Module):
 
     def forward(
         self,
-        image: torch.Tensor,  # (1, 3, H, W)
+        image: torch.Tensor,  # (1, 1, H, W)
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """Compute keypoints, scores, descriptors for image"""
-        # image = data["image"]
-        if image.shape[1] == 3:  # RGB
-            scale = image.new_tensor([0.299, 0.587, 0.114]).view(1, 3, 1, 1)
-            image = (image * scale).sum(1, keepdim=True)
         # Shared Encoder
         x = self.relu(self.conv1a(image))
         x = self.relu(self.conv1b(x))
@@ -179,12 +175,20 @@ class SuperPoint(nn.Module):
         b, _, h, w = scores.shape
         scores = scores.permute(0, 2, 3, 1).reshape(b, h, w, 8, 8)
         scores = scores.permute(0, 1, 3, 2, 4).reshape(b, h * 8, w * 8)
-        scores = simple_nms(scores, self.config["nms_radius"])[0]
+        scores = simple_nms(scores, self.config["nms_radius"])
+
+        # scores.shape == (B, H, W)
+
+        # Below this, B > 1 is not supported as each image can have a different number of keypoints.
 
         # Extract keypoints
         keypoints = torch.nonzero(scores > self.config["detection_threshold"])
 
-        scores = scores[keypoints.T[0], keypoints.T[1]]
+        # keypoints.shape == (N, 3)
+
+        scores = scores[keypoints.T[0], keypoints.T[1], keypoints.T[2]]
+
+        # scores.shape == (N,)
 
         # Discard keypoints near the image borders
         keypoints, scores = remove_borders(
@@ -198,7 +202,9 @@ class SuperPoint(nn.Module):
             )
 
         # Convert (h, w) to (x, y)
-        keypoints = torch.flip(keypoints, [1]).float()
+        keypoints = torch.flip(keypoints[:, 1:], (1,)).float()
+
+        # keypoints.shape == (N, 2)
 
         # Compute the dense descriptors
         cDa = self.relu(self.convDa(x))
@@ -206,6 +212,11 @@ class SuperPoint(nn.Module):
         descriptors = torch.nn.functional.normalize(descriptors, p=2, dim=1)
 
         # Extract descriptors
-        descriptors = sample_descriptors(keypoints, descriptors, 8)[0].T
+        descriptors = sample_descriptors(keypoints, descriptors, 8).permute(0, 2, 1)
 
-        return keypoints, scores, descriptors
+        # Insert artificial batch dimension
+        return (
+            keypoints[None],  # (1, N, 2)
+            scores[None],  # (1, N)
+            descriptors,  # (1, N, desc_dim)
+        )

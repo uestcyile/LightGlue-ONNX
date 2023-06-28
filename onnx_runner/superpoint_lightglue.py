@@ -19,20 +19,34 @@ class SuperpointLightglueRunner:
         matches0, matches1, mscores0, mscores1 = self.lightglue.run(
             None,
             {
-                "kpts0": kpts0[None],
-                "kpts1": kpts1[None],
-                "desc0": desc0[None],
-                "desc1": desc1[None],
-                "image0": image0,
-                "image1": image1,
+                "kpts0": self.normalize_keypoints(
+                    kpts0, image0.shape[2], image0.shape[3]
+                ),
+                "kpts1": self.normalize_keypoints(
+                    kpts1, image1.shape[2], image1.shape[3]
+                ),
+                "desc0": desc0,
+                "desc1": desc1,
             },
         )
         m_kpts0, m_kpts1 = self.post_process(kpts0, kpts1, matches0, scales0, scales1)
         return m_kpts0, m_kpts1
 
+    def normalize_keypoints(
+        self,
+        kpts: np.ndarray,
+        h: int,
+        w: int,
+    ) -> np.ndarray:
+        size = np.array([w, h], dtype=kpts.dtype)
+        shift = size / 2
+        scale = size.max() / 2
+        kpts = (kpts - shift) / scale
+        return kpts
+
     def post_process(self, kpts0, kpts1, matches0, scales0, scales1):
-        kpts0 = (kpts0[None] + 0.5) / scales0[None] - 0.5
-        kpts1 = (kpts1[None] + 0.5) / scales1[None] - 0.5
+        kpts0 = (kpts0 + 0.5) / scales0 - 0.5
+        kpts1 = (kpts1 + 0.5) / scales1 - 0.5
         # create match indices
         valid = matches0[0] > -1
         matches = np.stack([np.where(valid)[0], matches0[0][valid]], -1)

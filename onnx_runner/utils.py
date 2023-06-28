@@ -66,3 +66,10 @@ def load_image(
     if resize is not None:
         img, scales = resize_image(img, resize, fn=fn, interp=interp)
     return normalize_image(img)[None].astype(np.float32), np.asarray(scales)
+
+
+def rgb_to_grayscale(image: np.ndarray) -> np.ndarray:
+    """Convert an RGB image to grayscale."""
+    scale = np.array([0.299, 0.587, 0.114], dtype=image.dtype).reshape(3, 1, 1)
+    image = (image * scale).sum(axis=-3, keepdims=True)
+    return image
