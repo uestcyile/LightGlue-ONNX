@@ -47,8 +47,8 @@ def export_onnx(
         dynamic_axes={
             "image": {2: "height", 3: "width"},
             "keypoints": {0: "num_keypoints"},
-            "scores": {0: "num_keypoints"},
-            "descriptors": {0: "num_keypoints"},
+            "scores": {0: "num_scores"},
+            "descriptors": {0: "num_descriptors"},
         },
     )
 
@@ -72,12 +72,12 @@ def export_onnx(
         output_names=["matches0", "matches1", "mscores0", "mscores1"],
         opset_version=16,
         dynamic_axes={
-            "kpts0": {1: "num_keypoints"},
-            "kpts1": {1: "num_keypoints"},
-            "desc0": {1: "num_keypoints"},
-            "desc1": {1: "num_keypoints"},
-            "image0": {2: "height", 3: "width"},
-            "image1": {2: "height", 3: "width"},
+            "kpts0": {1: "num_kpts0"},
+            "kpts1": {1: "num_kpts1"},
+            "desc0": {1: "num_desc0"},
+            "desc1": {1: "num_desc1"},
+            "image0": {2: "height_0", 3: "width_0"},
+            "image1": {2: "height_1", 3: "width_1"},
         },
     )
 
