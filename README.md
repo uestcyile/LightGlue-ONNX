@@ -6,69 +6,65 @@ Open Neural Network Exchange (ONNX) compatible implementation of [LightGlue: Loc
 
 ## Updates
 
+- **30 June 2023**: Add support for DISK extractor.
 - **28 June 2023**: Add end-to-end SuperPoint+LightGlue export & inference pipeline.
 
 ## ONNX Export
 
 Prior to exporting the ONNX models, please install the [requirements](./requirements.txt) of the original LightGlue repository. ([Flash Attention](https://github.com/HazyResearch/flash-attention) does not need to be installed.)
 
-We provide two types of ONNX exports of the SuperPoint+LightGlue pipeline: individual models, and a combined end-to-end pipeline (recommended for convenience).
-
-- To convert the SuperPoint and LightGlue models to ONNX, run the following script:
+To convert the DISK or SuperPoint and LightGlue models to ONNX, run [`export.py`](./export.py). We provide two types of ONNX exports: individual standalone models, and a combined end-to-end pipeline (recommended for convenience) with the `--end2end` flag.
 
 ```bash
-python export_superpoint_lightglue.py --img_size 512 --superpoint_path weights/superpoint.onnx --lightglue_path weights/superpoint_lightglue.onnx
+python export.py \
+  --img_size 512 \
+  --extractor_type superpoint \
+  --extractor_path weights/superpoint.onnx \
+  --lightglue_path weights/superpoint_lightglue.onnx \
+  --dynamic
 ```
 
-Exporting individually can be useful when intermediate outputs can be cached or precomputed. On the other hand, the end-to-end pipeline can be more convenient.
-
-- To combine both into a single ONNX model, run the following script:
-
-```bash
-python export_superpoint_lightglue_end2end.py --img_size 512 --save_path weights/superpoint_lightglue_end2end.onnx
-```
-
-Although dynamic axes have been specified, it is recommended to export your own ONNX model with the appropriate input image sizes of your use case.
+- Exporting individually can be useful when intermediate outputs can be cached or precomputed. On the other hand, the end-to-end pipeline can be more convenient.
+- Although dynamic axes have been specified, it is recommended to export your own ONNX model with the appropriate input image sizes of your use case.
 
 ## ONNX Inference
 
 With ONNX models in hand, one can perform inference on Python using ONNX Runtime (see [requirements-onnx.txt](./requirements-onnx.txt)).
 
-The SuperPoint+LightGlue inference pipeline has been encapsulated into a runner class:
+The LightGlue inference pipeline has been encapsulated into a runner class:
 
 ```python
-from onnx_runner import (
-    SuperPointLightGlueEnd2EndRunner,
-    SuperpointLightglueRunner,
-    load_image,
-    rgb_to_grayscale,
-)
+from onnx_runner import LightGlueRunner, load_image, rgb_to_grayscale
 
-img0_path = "assets/sacre_coeur1.jpg"
-img1_path = "assets/sacre_coeur2.jpg"
-size = 512
-image0, scales0 = load_image(img0_path, resize=size)
-image1, scales1 = load_image(img1_path, resize=size)
-image0 = rgb_to_grayscale(image0)
-image1 = rgb_to_grayscale(image1)
+
+image0, scales0 = load_image("assets/sacre_coeur1.jpg", resize=512)
+image1, scales1 = load_image("assets/sacre_coeur2.jpg", resize=512)
+image0 = rgb_to_grayscale(image0)  # only needed for SuperPoint
+image1 = rgb_to_grayscale(image1)  # only needed for SuperPoint
 
 # Create ONNXRuntime runner
-# Separate ONNX models (export_superpoint_lightglue.py)
-runner = SuperpointLightglueRunner(
-    superpoint_path="weights/superpoint.onnx",
+runner = LightGlueRunner(
+    extractor_path="weights/superpoint.onnx",
     lightglue_path="weights/superpoint_lightglue.onnx",
-    providers=["CUDAExecutionProvider", "CPUExecutionProvider"],
-)
-
-# Combined model (export_superpoint_lightglue_end2end.py)
-runner = SuperPointLightGlueEnd2EndRunner(
-    onnx_path="weights/superpoint_lightglue_end2end.onnx",
     providers=["CUDAExecutionProvider", "CPUExecutionProvider"],
 )
 
 # Run inference
 m_kpts0, m_kpts1 = runner.run(image0, image1, scales0, scales1)
+```
 
+Note that the output keypoints have already been rescaled back to the original image sizes.
+
+Alternatively, you can also run [`infer.py`](./infer.py).
+
+```bash
+python infer.py \
+  --img_paths assets/DSC_0410.JPG assets/DSC_0411.JPG \
+  --img_size 512 \
+  --lightglue_path weights/superpoint_lightglue.onnx \
+  --extractor_type superpoint \
+  --extractor_path weights/superpoint.onnx \
+  --viz
 ```
 
 ## Caveats
@@ -77,9 +73,8 @@ As the ONNX Runtime has limited support for features like dynamic control flow, 
 
 ### Feature Extraction
 
-- The `DISK` extractor cannot be exported to ONNX due to the use of `same` padding in the convolution layers of its UNet.
+- ~~The DISK extractor cannot be exported to ONNX due to the use of `same` padding in the convolution layers of its UNet.~~ Fixed by monkey-patching DISK as its source code is located within the `kornia` package. This [issue](https://github.com/pytorch/pytorch/issues/68880) should be fixed with PyTorch >= 2.1.
 - The `max_num_keypoints` parameter (i.e., setting an upper bound on the number of keypoints returned by the extractor) is not supported at the moment due to `torch.topk()`.
-- Grayscale images are assumed. The conditional RGB2Grayscale logic that was previously included in SuperPoint's forward pass has been moved outside and refactored into the `rgb_to_grayscale()` utility function.
 - Only batch size `1` is currently supported. This limitation stems from the fact that different images in the same batch can have varying numbers of keypoints, leading to non-uniform (a.k.a. *ragged*) tensors.
 
 ### LightGlue Keypoint Matching
@@ -97,9 +92,10 @@ Additionally, the outputs of the ONNX models differ slightly from the original P
 - **Support for batch size > 1**: Blocked by the fact that different images can have varying numbers of keypoints. Perhaps max-length padding?
 - **Support for dynamic control flow**: Investigating *script-mode* ONNX export instead of *trace-mode*.
 - **Mixed-precision Support**
+- **Quantization Support**
 
 ## Credits
-If you use any ideas from the papers or code in this repo, please consider citing the authors of [LightGlue](https://arxiv.org/abs/2306.13643) and [SuperPoint](https://arxiv.org/abs/1712.07629):
+If you use any ideas from the papers or code in this repo, please consider citing the authors of [LightGlue](https://arxiv.org/abs/2306.13643) and [SuperPoint](https://arxiv.org/abs/1712.07629) and [DISK](https://arxiv.org/abs/2006.13566). Lastly, if the ONNX versions helped you in any way, please also consider starring this repository.
 
 ```txt
 @inproceedings{lindenberger23lightglue,
@@ -126,6 +122,24 @@ If you use any ideas from the papers or code in this repo, please consider citin
   eprint       = {1712.07629},
   timestamp    = {Mon, 13 Aug 2018 16:47:29 +0200},
   biburl       = {https://dblp.org/rec/journals/corr/abs-1712-07629.bib},
+  bibsource    = {dblp computer science bibliography, https://dblp.org}
+}
+```
+
+```txt
+@article{DBLP:journals/corr/abs-2006-13566,
+  author       = {Michal J. Tyszkiewicz and
+                  Pascal Fua and
+                  Eduard Trulls},
+  title        = {{DISK:} Learning local features with policy gradient},
+  journal      = {CoRR},
+  volume       = {abs/2006.13566},
+  year         = {2020},
+  url          = {https://arxiv.org/abs/2006.13566},
+  eprinttype    = {arXiv},
+  eprint       = {2006.13566},
+  timestamp    = {Wed, 01 Jul 2020 15:21:23 +0200},
+  biburl       = {https://dblp.org/rec/journals/corr/abs-2006-13566.bib},
   bibsource    = {dblp computer science bibliography, https://dblp.org}
 }
 ```
