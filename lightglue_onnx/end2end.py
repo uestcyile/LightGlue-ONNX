@@ -2,15 +2,12 @@ from typing import Tuple
 
 import torch
 
-from .lightglue import LightGlue
-from .superpoint import SuperPoint
 
-
-class SuperPointLightGlueEnd2End(torch.nn.Module):
-    def __init__(self, *, superpoint_kwargs={}, lightglue_kwargs={}):
+class LightGlueEnd2End(torch.nn.Module):
+    def __init__(self, extractor: torch.nn.Module, lightglue: torch.nn.Module):
         super().__init__()
-        self.superpoint = SuperPoint(**superpoint_kwargs).eval()
-        self.lightglue = LightGlue("superpoint", **lightglue_kwargs).eval()
+        self.extractor = extractor
+        self.lightglue = lightglue
 
     def forward(
         self,
@@ -27,8 +24,8 @@ class SuperPointLightGlueEnd2End(torch.nn.Module):
         # image.shape == (B, 3, H, W)
         _, _, h0, w0 = image0.shape
         _, _, h1, w1 = image1.shape
-        kpts0, scores0, desc0 = self.superpoint(image0)
-        kpts1, scores1, desc1 = self.superpoint(image1)
+        kpts0, scores0, desc0 = self.extractor(image0)
+        kpts1, scores1, desc1 = self.extractor(image1)
 
         # kpts.shape == (1, N, 2), desc.shape == (1, N, desc_dim)
 
@@ -49,7 +46,7 @@ def normalize_keypoints(
     h: int,
     w: int,
 ) -> torch.Tensor:
-    one = kpts.new_tensor(1)
+    one = torch.tensor(1, dtype=torch.float32)
     size = torch.stack([one * w, one * h])
     shift = size.float() / 2
     scale = size.max().float() / 2
