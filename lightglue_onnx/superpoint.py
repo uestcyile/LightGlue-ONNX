@@ -202,7 +202,7 @@ class SuperPoint(nn.Module):
             )
 
         # Convert (h, w) to (x, y)
-        keypoints = torch.flip(keypoints[:, 1:], (1,)).float()
+        keypoints = torch.flip(keypoints[:, 1:], (1,))
 
         # keypoints.shape == (N, 2)
 

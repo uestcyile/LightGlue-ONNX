@@ -1,19 +1,77 @@
-import torch
-import torch.nn as nn
-import kornia
 from types import SimpleNamespace
+from typing import Tuple
+
+import kornia
+import torch
+import torch.nn.functional as F
 
 
-class DISK(nn.Module):
+def nms(
+    signal: torch.Tensor, window_size: int = 5, cutoff: float = 0.0
+) -> torch.Tensor:
+    if window_size % 2 != 1:
+        raise ValueError(f"window_size has to be odd, got {window_size}")
+
+    _, ixs = F.max_pool2d(
+        signal,
+        kernel_size=window_size,
+        stride=1,
+        padding=window_size // 2,
+        return_indices=True,
+    )
+
+    _, _, h, w = signal.shape
+    coords = torch.arange(h * w).reshape(h, w)
+    nms = ixs == coords
+
+    if cutoff is None:
+        return nms
+    else:
+        return nms & (signal > cutoff)
+
+
+def heatmap_to_keypoints(
+    heatmap: torch.Tensor,
+    n: int | None = None,
+    window_size: int = 5,
+    score_threshold: float = 0.0,
+):
+    """Inference-time nms-based detection protocol."""
+    nmsed = nms(heatmap, window_size=window_size, cutoff=score_threshold)
+
+    bcyx = nmsed.nonzero()
+    xy = bcyx[..., 2:].flip((1,))
+    detection_logp = heatmap[nmsed]
+
+    if n is not None:
+        n_ = min(n + 1, detection_logp.numel())
+        # torch.kthvalue picks in ascending order and we want to pick in
+        # descending order, so we pick n-th smallest among -logp to get
+        # -threshold
+        minus_threshold, _indices = torch.kthvalue(-detection_logp, n_)
+        mask = detection_logp > -minus_threshold
+
+        xy = xy[mask]
+        detection_logp = detection_logp[mask]
+
+        # it may be that due to numerical saturation on the threshold we have
+        # more than n keypoints, so we need to clip them
+        xy = xy[:n]
+        detection_logp = detection_logp[:n]
+
+    return xy, detection_logp
+
+
+class DISK(torch.nn.Module):
     default_conf = {
-        'weights': 'depth',
-        'max_num_keypoints': None,
-        'desc_dim': 128,
-        'nms_window_size': 5,
-        'detection_threshold': 0.0,
-        'pad_if_not_divisible': True,
+        "weights": "depth",
+        "max_num_keypoints": None,
+        "desc_dim": 128,
+        "nms_window_size": 5,
+        "detection_threshold": 0.0,
+        "pad_if_not_divisible": True,
     }
-    required_data_keys = ['image']
+    required_data_keys = ["image"]
 
     def __init__(self, **conf) -> None:
         super().__init__()
@@ -21,27 +79,37 @@ class DISK(nn.Module):
         self.conf = SimpleNamespace(**self.conf)
         self.model = kornia.feature.DISK.from_pretrained(self.conf.weights)
 
-    def forward(self, data: dict) -> dict:
-        image = data['image']
+    def forward(
+        self, image: torch.Tensor
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        # image.shape == (1, 3, H, W)
+        if self.conf.pad_if_not_divisible:
+            h, w = image.shape[2:]
+            pd_h = (16 - h % 16) % 16
+            pd_w = (16 - w % 16) % 16
+            image = torch.nn.functional.pad(image, (0, pd_w, 0, pd_h), value=0.0)
 
-        features = self.model(
-            image,
+        heatmaps, descriptors = self.model.heatmap_and_dense_descriptors(image)
+
+        if self.conf.pad_if_not_divisible:
+            heatmaps = heatmaps[..., :h, :w]
+            descriptors = descriptors[..., :h, :w]
+
+        # heatmaps.shape == (1, 1, H, W), descriptors.shape == (1, desc_dim, H, W)
+
+        keypoints, scores = heatmap_to_keypoints(
+            heatmaps,
             n=self.conf.max_num_keypoints,
             window_size=self.conf.nms_window_size,
             score_threshold=self.conf.detection_threshold,
-            pad_if_not_divisible=self.conf.pad_if_not_divisible
         )
-        keypoints = [f.keypoints for f in features]
-        scores = [f.detection_scores for f in features]
-        descriptors = [f.descriptors for f in features]
-        del features
 
-        keypoints = torch.stack(keypoints, 0)
-        scores = torch.stack(scores, 0)
-        descriptors = torch.stack(descriptors, 0)
+        # keypoints.shape == (N, 2), scores.shape == (N,)
 
-        return {
-            'keypoints': keypoints.to(image),
-            'keypoint_scores': scores.to(image),
-            'descriptors': descriptors.to(image),
-        }
+        descriptors = descriptors[..., keypoints.T[1], keypoints.T[0]].permute(0, 2, 1)
+        descriptors = F.normalize(descriptors, dim=-1)
+
+        # descriptors.shape == (1, N, desc_dim)
+
+        # Insert artificial batch dimension
+        return keypoints[None], scores[None], descriptors
