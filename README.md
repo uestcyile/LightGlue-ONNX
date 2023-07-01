@@ -6,6 +6,7 @@ Open Neural Network Exchange (ONNX) compatible implementation of [LightGlue: Loc
 
 ## Updates
 
+- **1 July 2023**: Add support for extractor `max_num_keypoints`.
 - **30 June 2023**: Add support for DISK extractor.
 - **28 June 2023**: Add end-to-end SuperPoint+LightGlue export & inference pipeline.
 
@@ -35,7 +36,6 @@ The LightGlue inference pipeline has been encapsulated into a runner class:
 
 ```python
 from onnx_runner import LightGlueRunner, load_image, rgb_to_grayscale
-
 
 image0, scales0 = load_image("assets/sacre_coeur1.jpg", resize=512)
 image1, scales1 = load_image("assets/sacre_coeur2.jpg", resize=512)
@@ -73,14 +73,12 @@ As the ONNX Runtime has limited support for features like dynamic control flow, 
 
 ### Feature Extraction
 
-- ~~The DISK extractor cannot be exported to ONNX due to the use of `same` padding in the convolution layers of its UNet.~~ Fixed by monkey-patching DISK as its source code is located within the `kornia` package. This [issue](https://github.com/pytorch/pytorch/issues/68880) should be fixed with PyTorch >= 2.1.
-- The `max_num_keypoints` parameter (i.e., setting an upper bound on the number of keypoints returned by the extractor) is not supported at the moment due to `torch.topk()`.
 - Only batch size `1` is currently supported. This limitation stems from the fact that different images in the same batch can have varying numbers of keypoints, leading to non-uniform (a.k.a. *ragged*) tensors.
 
 ### LightGlue Keypoint Matching
 
 - Since dynamic control flow has limited support in ONNX tracing, by extension, early stopping and adaptive point pruning (the `depth_confidence` and `width_confidence` parameters) are also difficult to export to ONNX.
-- PyTorch's `F.scaled_dot_product_attention()` function fails to export to ONNX as of version `2.0.1`. However, this [issue](https://github.com/pytorch/pytorch/issues/97262) seems to be fixed in PyTorch-nightly. Currently, the backup implementation (`else` branch of `lightglue_onnx.lightglue.FastAttention.forward`) is used.
+- Flash Attention is turned off.
 - Mixed precision is turned off.
 - Note that the end-to-end version, despite its name, still requires the postprocessing (filtering valid matches) function outside the ONNX model since the `scales` variables need to be passed.
 
