@@ -41,25 +41,15 @@ def heatmap_to_keypoints(
 
     bcyx = nmsed.nonzero()
     xy = bcyx[..., 2:].flip((1,))
-    detection_logp = heatmap[nmsed]
+    scores = heatmap[nmsed]
 
     if n is not None:
-        n_ = min(n + 1, detection_logp.numel())
-        # torch.kthvalue picks in ascending order and we want to pick in
-        # descending order, so we pick n-th smallest among -logp to get
-        # -threshold
-        minus_threshold, _indices = torch.kthvalue(-detection_logp, n_)
-        mask = detection_logp > -minus_threshold
+        kpts_len = torch.tensor(scores.shape[0])  # Still dynamic despite trace warning
+        max_keypoints = torch.minimum(torch.tensor(n), kpts_len)
+        scores, indices = torch.topk(scores, max_keypoints, dim=0)
+        return xy[indices], scores
 
-        xy = xy[mask]
-        detection_logp = detection_logp[mask]
-
-        # it may be that due to numerical saturation on the threshold we have
-        # more than n keypoints, so we need to clip them
-        xy = xy[:n]
-        detection_logp = detection_logp[:n]
-
-    return xy, detection_logp
+    return xy, scores
 
 
 class DISK(torch.nn.Module):

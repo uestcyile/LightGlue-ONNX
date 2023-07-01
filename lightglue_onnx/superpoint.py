@@ -74,10 +74,10 @@ def remove_borders(keypoints, scores, border: int, height: int, width: int):
     return keypoints[mask], scores[mask]
 
 
-def top_k_keypoints(keypoints, scores, k: int):
-    if k >= len(keypoints):
-        return keypoints, scores
-    scores, indices = torch.topk(scores, k, dim=0)
+def top_k_keypoints(keypoints: torch.Tensor, scores: torch.Tensor, k: int):
+    kpts_len = torch.tensor(keypoints.shape[0])  # Still dynamic despite trace warning
+    max_keypoints = torch.minimum(torch.tensor(k), kpts_len)
+    scores, indices = torch.topk(scores, max_keypoints, dim=0)
     return keypoints[indices], scores
 
 
@@ -111,7 +111,7 @@ class SuperPoint(nn.Module):
     default_config = {
         "descriptor_dim": 256,
         "nms_radius": 4,
-        "max_num_keypoints": -1,
+        "max_num_keypoints": None,
         "detection_threshold": 0.0005,
         "remove_borders": 4,
     }
@@ -145,8 +145,8 @@ class SuperPoint(nn.Module):
         self.load_state_dict(torch.hub.load_state_dict_from_url(url))
 
         mk = self.config["max_num_keypoints"]
-        if mk == 0 or mk < -1:
-            raise ValueError('"max_num_keypoints" must be positive or "-1"')
+        if mk is not None and mk <= 0:
+            raise ValueError('"max_num_keypoints" must be positive or None')
 
         print("Loaded SuperPoint model")
 
@@ -196,7 +196,7 @@ class SuperPoint(nn.Module):
         )
 
         # Keep the k keypoints with highest score
-        if False:  # self.config["max_num_keypoints"] >= 0:
+        if self.config["max_num_keypoints"] is not None:
             keypoints, scores = top_k_keypoints(
                 keypoints, scores, self.config["max_num_keypoints"]
             )
