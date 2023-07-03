@@ -21,6 +21,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--extractor_type",
         type=str,
+        choices=["superpoint", "disk"],
         required=True,
         help="Type of feature extractor. Supported extractors are 'superpoint' and 'disk'.",
     )
