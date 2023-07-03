@@ -62,19 +62,16 @@ class LightGlueRunner:
             )
             return m_kpts0, m_kpts1
 
-    def normalize_keypoints(
-        self,
-        kpts: np.ndarray,
-        h: int,
-        w: int,
-    ) -> np.ndarray:
+    @staticmethod
+    def normalize_keypoints(kpts: np.ndarray, h: int, w: int) -> np.ndarray:
         size = np.array([w, h])
         shift = size / 2
         scale = size.max() / 2
         kpts = (kpts - shift) / scale
         return kpts.astype(np.float32)
 
-    def post_process(self, kpts0, kpts1, matches0, scales0, scales1):
+    @staticmethod
+    def post_process(kpts0, kpts1, matches0, scales0, scales1):
         kpts0 = (kpts0 + 0.5) / scales0 - 0.5
         kpts1 = (kpts1 + 0.5) / scales1 - 0.5
         # create match indices
