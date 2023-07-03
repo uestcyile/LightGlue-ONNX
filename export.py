@@ -22,6 +22,7 @@ def parse_args() -> argparse.Namespace:
         "--extractor_type",
         type=str,
         default="superpoint",
+        choices=["superpoint", "disk"],
         required=False,
         help="Type of feature extractor. Supported extractors are 'superpoint' and 'disk'. Defaults to 'superpoint'.",
     )
