@@ -6,6 +6,7 @@ Open Neural Network Exchange (ONNX) compatible implementation of [LightGlue: Loc
 
 ## Updates
 
+- **4 July 2023**: Add inference time comparisons.
 - **1 July 2023**: Add support for extractor `max_num_keypoints`.
 - **30 June 2023**: Add support for DISK extractor.
 - **28 June 2023**: Add end-to-end SuperPoint+LightGlue export & inference pipeline.
@@ -66,6 +67,12 @@ python infer.py \
   --extractor_path weights/superpoint.onnx \
   --viz
 ```
+
+## Inference Time Comparison
+
+In general, for smaller numbers of keypoints the ONNX version performs similarly to the PyTorch implementation. However, as the number of keypoints increases, the PyTorch CUDA implementation is faster, whereas ONNX is faster overall for CPU inference. See [EVALUATION.md](./evaluation/EVALUATION.md) for technical details.
+
+<p align="center"><a href="https://github.com/fabio-sim/LightGlue-ONNX/blob/main/evaluation/EVALUATION.md"><img src="assets/latency.png" alt="Latency Comparison" width=80%></a>
 
 ## Caveats
 
