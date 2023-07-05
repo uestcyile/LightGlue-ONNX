@@ -1,3 +1,5 @@
+<div align="right"> English | <a href="https://github.com/fabio-sim/LightGlue-ONNX/blob/main/docs/README.zh.md">简体中文</a></div>
+
 # LightGlue ONNX
 
 Open Neural Network Exchange (ONNX) compatible implementation of [LightGlue: Local Feature Matching at Light Speed](https://github.com/cvg/LightGlue). The ONNX model format allows for interoperability across different platforms with support for multiple execution providers, and removes Python-specific dependencies such as PyTorch.
@@ -13,9 +15,9 @@ Open Neural Network Exchange (ONNX) compatible implementation of [LightGlue: Loc
 
 ## ONNX Export
 
-Prior to exporting the ONNX models, please install the [requirements](./requirements.txt) of the original LightGlue repository. ([Flash Attention](https://github.com/HazyResearch/flash-attention) does not need to be installed.)
+Prior to exporting the ONNX models, please install the [requirements](/requirements.txt) of the original LightGlue repository. ([Flash Attention](https://github.com/HazyResearch/flash-attention) does not need to be installed.)
 
-To convert the DISK or SuperPoint and LightGlue models to ONNX, run [`export.py`](./export.py). We provide two types of ONNX exports: individual standalone models, and a combined end-to-end pipeline (recommended for convenience) with the `--end2end` flag.
+To convert the DISK or SuperPoint and LightGlue models to ONNX, run [`export.py`](/export.py). We provide two types of ONNX exports: individual standalone models, and a combined end-to-end pipeline (recommended for convenience) with the `--end2end` flag.
 
 ```bash
 python export.py \
@@ -29,9 +31,11 @@ python export.py \
 - Exporting individually can be useful when intermediate outputs can be cached or precomputed. On the other hand, the end-to-end pipeline can be more convenient.
 - Although dynamic axes have been specified, it is recommended to export your own ONNX model with the appropriate input image sizes of your use case.
 
+If you would like to try out inference right away, you can download ONNX models that have already been exported [here](https://github.com/fabio-sim/LightGlue-ONNX/releases).
+
 ## ONNX Inference
 
-With ONNX models in hand, one can perform inference on Python using ONNX Runtime (see [requirements-onnx.txt](./requirements-onnx.txt)).
+With ONNX models in hand, one can perform inference on Python using ONNX Runtime (see [requirements-onnx.txt](/requirements-onnx.txt)).
 
 The LightGlue inference pipeline has been encapsulated into a runner class:
 
@@ -56,7 +60,7 @@ m_kpts0, m_kpts1 = runner.run(image0, image1, scales0, scales1)
 
 Note that the output keypoints have already been rescaled back to the original image sizes.
 
-Alternatively, you can also run [`infer.py`](./infer.py).
+Alternatively, you can also run [`infer.py`](/infer.py).
 
 ```bash
 python infer.py \
@@ -70,7 +74,7 @@ python infer.py \
 
 ## Inference Time Comparison
 
-In general, for smaller numbers of keypoints the ONNX version performs similarly to the PyTorch implementation. However, as the number of keypoints increases, the PyTorch CUDA implementation is faster, whereas ONNX is faster overall for CPU inference. See [EVALUATION.md](./evaluation/EVALUATION.md) for technical details.
+In general, for smaller numbers of keypoints the ONNX version performs similarly to the PyTorch implementation. However, as the number of keypoints increases, the PyTorch CUDA implementation is faster, whereas ONNX is faster overall for CPU inference. See [EVALUATION.md](/evaluation/EVALUATION.md) for technical details.
 
 <p align="center"><a href="https://github.com/fabio-sim/LightGlue-ONNX/blob/main/evaluation/EVALUATION.md"><img src="assets/latency.png" alt="Latency Comparison" width=80%></a>
 
