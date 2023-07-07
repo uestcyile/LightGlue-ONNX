@@ -46,6 +46,11 @@ def parse_args() -> argparse.Namespace:
         help="Whether to export an end-to-end pipeline instead of individual models.",
     )
     parser.add_argument(
+        "--safe",
+        action="store_true",
+        help="Use the safe mode to prevent LightGlue from crashing on the rare occasion that the feature extractor outputs zero keypoints. Only applies when exporting with the end2end option.",
+    )
+    parser.add_argument(
         "--dynamic", action="store_true", help="Whether to allow dynamic image sizes."
     )
 
@@ -69,6 +74,7 @@ def export_onnx(
     img0_path="assets/sacre_coeur1.jpg",
     img1_path="assets/sacre_coeur2.jpg",
     end2end=False,
+    safe=False,
     dynamic=False,
     max_num_keypoints=None,
 ):
@@ -81,15 +87,16 @@ def export_onnx(
         extractor_path = f"weights/{extractor_type}.onnx"
 
     if lightglue_path is None:
-        if end2end:
-            lightglue_path = f"weights/{extractor_type}_lightglue_end2end.onnx"
-        else:
-            lightglue_path = f"weights/{extractor_type}_lightglue.onnx"
+        lightglue_path = (
+            f"weights/{extractor_type}_lightglue"
+            f"{'_end2end' if end2end else ''}"
+            f"{'_safe' if safe else ''}"
+            ".onnx"
+        )
 
     # Sample images for tracing
     image0, scales0 = load_image(img0_path, resize=img_size)
     image1, scales1 = load_image(img1_path, resize=img_size)
-
     # Models
     extractor_type = extractor_type.lower()
     if extractor_type == "superpoint":
@@ -117,7 +124,23 @@ def export_onnx(
 
     # ONNX Export
     if end2end:
-        pipeline = LightGlueEnd2End(extractor, lightglue).eval()
+        if safe:
+            extractor = torch.jit.trace(extractor, image0[None])
+            desc_dim = 256 if extractor_type == "superpoint" else 128
+            lightglue = torch.jit.trace(
+                lightglue,
+                (
+                    torch.rand(1, 5, 2),
+                    torch.rand(1, 10, 2),
+                    torch.rand(1, 5, desc_dim),
+                    torch.rand(1, 10, desc_dim),
+                ),
+            )
+            pipeline = LightGlueEnd2End(extractor, lightglue, safe=safe).eval()
+            pipeline = torch.jit.script(pipeline)
+        else:
+            pipeline = LightGlueEnd2End(extractor, lightglue).eval()
+
         dynamic_axes = {
             "kpts0": {1: "num_keypoints0"},
             "kpts1": {1: "num_keypoints1"},
