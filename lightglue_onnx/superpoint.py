@@ -191,9 +191,10 @@ class SuperPoint(nn.Module):
         # scores.shape == (N,)
 
         # Discard keypoints near the image borders
-        keypoints, scores = remove_borders(
-            keypoints, scores, self.config["remove_borders"], h * 8, w * 8
-        )
+        if self.config["remove_borders"] > 0:
+            keypoints, scores = remove_borders(
+                keypoints, scores, self.config["remove_borders"], h * 8, w * 8
+            )
 
         # Keep the k keypoints with highest score
         if self.config["max_num_keypoints"] is not None:
