@@ -64,7 +64,10 @@ class FastAttention(nn.Module):
         self.s = dim**-0.5
 
     def forward(self, q, k, v) -> torch.Tensor:
-        if hasattr(F, "scaled_dot_product_attention"):
+        if (
+            hasattr(F, "scaled_dot_product_attention")
+            and not torch.is_autocast_enabled()
+        ):
             q, k, v = [x.contiguous() for x in [q, k, v]]
             return F.scaled_dot_product_attention(q, k, v)
         else:
@@ -293,10 +296,6 @@ class LightGlue(nn.Module):
         b, m, _ = kpts0.shape
         b, n, _ = kpts1.shape
 
-        if False:  # torch.is_autocast_enabled():
-            desc0 = desc0.half()
-            desc1 = desc1.half()
-
         desc0 = self.input_proj(desc0)
         desc1 = self.input_proj(desc1)
 
@@ -406,8 +405,12 @@ class LightGlue(nn.Module):
         """obtain matches from a log assignment matrix [Bx M+1 x N+1]"""
         max0, max1 = scores[:, :-1, :-1].max(2), scores[:, :-1, :-1].max(1)
         m0, m1 = max0.indices, max1.indices
-        mutual0 = torch.arange(m0.shape[1])[None] == m1.gather(1, m0)
-        mutual1 = torch.arange(m1.shape[1])[None] == m0.gather(1, m1)
+        mutual0 = torch.arange(m0.shape[1], device=scores.device)[None] == m1.gather(
+            1, m0
+        )
+        mutual1 = torch.arange(m1.shape[1], device=scores.device)[None] == m0.gather(
+            1, m1
+        )
         max0_exp = max0.values.exp()
         zero = max0_exp.new_tensor(0)
         mscores0 = torch.where(mutual0, max0_exp, zero)

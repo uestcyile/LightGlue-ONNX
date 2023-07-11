@@ -1,5 +1,5 @@
 from types import SimpleNamespace
-from typing import Tuple
+from typing import Optional, Tuple
 
 import kornia
 import torch
@@ -21,7 +21,7 @@ def nms(
     )
 
     _, _, h, w = signal.shape
-    coords = torch.arange(h * w).reshape(h, w)
+    coords = torch.arange(h * w, device=signal.device).reshape(h, w)
     nms = ixs == coords
 
     if cutoff is None:
@@ -32,7 +32,7 @@ def nms(
 
 def heatmap_to_keypoints(
     heatmap: torch.Tensor,
-    n: int | None = None,
+    n: Optional[int] = None,
     window_size: int = 5,
     score_threshold: float = 0.0,
 ):
