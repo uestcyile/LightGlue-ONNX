@@ -1,4 +1,5 @@
 import argparse
+from typing import List
 
 import torch
 
@@ -85,6 +86,9 @@ def export_onnx(
     max_num_keypoints=None,
 ):
     # Handle args
+    if isinstance(img_size, List) and len(img_size) == 1:
+        img_size = img_size[0]
+
     if extractor_path is not None and end2end:
         raise ValueError(
             "Extractor will be combined with LightGlue when exporting end-to-end model."
