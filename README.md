@@ -8,6 +8,7 @@ Open Neural Network Exchange (ONNX) compatible implementation of [LightGlue: Loc
 
 ## Updates
 
+- **11 July 2023**: Add support for mixed precision.
 - **4 July 2023**: Add inference time comparisons.
 - **1 July 2023**: Add support for extractor `max_num_keypoints`.
 - **30 June 2023**: Add support for DISK extractor.
@@ -30,6 +31,7 @@ python export.py \
 
 - Exporting individually can be useful when intermediate outputs can be cached or precomputed. On the other hand, the end-to-end pipeline can be more convenient.
 - Although dynamic axes have been specified, it is recommended to export your own ONNX model with the appropriate input image sizes of your use case.
+- Use the `--mp` option to export in mixed precision for more speed gains.
 
 If you would like to try out inference right away, you can download ONNX models that have already been exported [here](https://github.com/fabio-sim/LightGlue-ONNX/releases).
 
@@ -76,7 +78,7 @@ python infer.py \
 
 In general, for smaller numbers of keypoints the ONNX version performs similarly to the PyTorch implementation. However, as the number of keypoints increases, the PyTorch CUDA implementation is faster, whereas ONNX is faster overall for CPU inference. See [EVALUATION.md](/evaluation/EVALUATION.md) for technical details.
 
-<p align="center"><a href="https://github.com/fabio-sim/LightGlue-ONNX/blob/main/evaluation/EVALUATION.md"><img src="assets/latency.png" alt="Latency Comparison" width=80%></a>
+<p align="center"><a href="https://github.com/fabio-sim/LightGlue-ONNX/blob/main/evaluation/EVALUATION.md"><img src="assets/latency.png" alt="Latency Comparison" width=90%></a>
 
 ## Caveats
 
@@ -90,7 +92,6 @@ As the ONNX Runtime has limited support for features like dynamic control flow, 
 
 - Since dynamic control flow has limited support in ONNX tracing, by extension, early stopping and adaptive point pruning (the `depth_confidence` and `width_confidence` parameters) are also difficult to export to ONNX.
 - Flash Attention is turned off.
-- Mixed precision is turned off.
 - Note that the end-to-end version, despite its name, still requires the postprocessing (filtering valid matches) function outside the ONNX model since the `scales` variables need to be passed.
 
 Additionally, the outputs of the ONNX models differ slightly from the original PyTorch models (by a small error on the magnitude of `1e-6` to `1e-5` for the scores/descriptors). Although the cause is still unclear, this could be due to differing implementations or modified dtypes.
@@ -100,7 +101,6 @@ Additionally, the outputs of the ONNX models differ slightly from the original P
 - **Support for TensorRT**: Appears to be currently blocked by unsupported Einstein summation operations (`torch.einsum()`) in TensorRT - Thanks to [Shidqiet](https://github.com/Shidqiet)'s investigation.
 - **Support for batch size > 1**: Blocked by the fact that different images can have varying numbers of keypoints. Perhaps max-length padding?
 - **Support for dynamic control flow**: Investigating *script-mode* ONNX export instead of *trace-mode*.
-- **Mixed-precision Support**
 - **Quantization Support**
 
 ## Credits

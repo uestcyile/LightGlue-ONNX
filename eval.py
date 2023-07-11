@@ -47,6 +47,27 @@ def parse_args() -> argparse.Namespace:
         required=False,
         help="cuda or cpu",
     )
+    parser.add_argument(
+        "--mp",
+        action="store_true",
+        help="Whether to enable mixed precision (CUDA only).",
+    )
+
+    # ONNXRuntime-specific args
+    parser.add_argument(
+        "--extractor_path",
+        type=str,
+        default=None,
+        required=False,
+        help="Path to ONNX extractor model.",
+    )
+    parser.add_argument(
+        "--lightglue_path",
+        type=str,
+        default=None,
+        required=False,
+        help="Path to ONNX LightGlue model.",
+    )
     return parser.parse_args()
 
 
@@ -59,7 +80,13 @@ def get_megadepth_images(path: Path):
 
 
 def create_models(
-    framework: str, extractor_type="superpoint", max_num_keypoints=512, device="cuda"
+    framework: str,
+    extractor_type="superpoint",
+    max_num_keypoints=512,
+    device="cuda",
+    mp=False,
+    extractor_path=None,
+    lightglue_path=None,
 ):
     if framework == "torch":
         if extractor_type == "superpoint":
@@ -69,7 +96,7 @@ def create_models(
         elif extractor_type == "disk":
             extractor = DISK(max_num_keypoints=max_num_keypoints).eval().to(device)
 
-        lightglue = LightGlue(extractor_type).eval().to(device)
+        lightglue = LightGlue(extractor_type, mp=mp).eval().to(device)
     elif framework == "ort":
         sess_opts = ort.SessionOptions()
         sess_opts.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
@@ -78,14 +105,24 @@ def create_models(
             if device == "cuda"
             else ["CPUExecutionProvider"]
         )
+        if extractor_path is None:
+            extractor_path = (
+                f"weights/{extractor_type}_{max_num_keypoints}"
+                f"{'_mp' if mp else ''}"
+                ".onnx"
+            )
         extractor = ort.InferenceSession(
-            f"weights/{extractor_type}_{max_num_keypoints}.onnx",
+            extractor_path,
             sess_options=sess_opts,
             providers=providers,
         )
 
+        if lightglue_path is None:
+            lightglue_path = (
+                f"weights/{extractor_type}_lightglue" f"{'_mp' if mp else ''}" ".onnx"
+            )
         lightglue = ort.InferenceSession(
-            f"weights/{extractor_type}_lightglue.onnx",
+            lightglue_path,
             sess_options=sess_opts,
             providers=providers,
         )
@@ -163,6 +200,9 @@ def evaluate(
     extractor_type="superpoint",
     max_num_keypoints=512,
     device="cuda",
+    mp=False,
+    extractor_path=None,
+    lightglue_path=None,
 ):
     images = get_megadepth_images(megadepth_path)
     image_pairs = list(zip(images[::2], images[1::2]))
@@ -172,6 +212,9 @@ def evaluate(
         extractor_type=extractor_type,
         max_num_keypoints=max_num_keypoints,
         device=device,
+        mp=mp,
+        extractor_path=extractor_path,
+        lightglue_path=lightglue_path,
     )
 
     # Warmup

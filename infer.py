@@ -58,14 +58,16 @@ def infer(
     img0_path = img_paths[0]
     img1_path = img_paths[1]
     if isinstance(img_size, List):
-        if len(img_size) == 2:
+        if len(img_size) == 1:
+            size0 = size1 = img_size[0]
+        elif len(img_size) == 2:
             size0 = size1 = img_size
         elif len(img_size) == 4:
-            size0, size1 = img_size[::2]
+            size0, size1 = img_size[:2], img_size[2:]
         else:
             raise ValueError("Invalid img_size. Please provide 1, 2, or 4 integers.")
     else:
-        size0, size1 = img_size, img_size
+        size0 = size1 = img_size
 
     image0, scales0 = load_image(img0_path, resize=size0)
     image1, scales1 = load_image(img1_path, resize=size1)
