@@ -8,6 +8,7 @@
 
 ## 更新
 
+- **2023年7月11日**: 支持混合精度。
 - **2023年7月4日**: 加了运行时间比较。
 - **2023年7月1日**: 支持特征提取`max_num_keypoints`。
 - **2023年6月30日**: 支持DISK特征提取。
@@ -29,6 +30,7 @@ python export.py \
 ```
 
 - 虽然已指定了`--dynamic`，但建议使用适合您用例的图像大小转换。
+- 指定`--mp`使混合精度。
 
 如果您想立即尝试ONNX运行，可以下载已转换的[ONNX模型](https://github.com/fabio-sim/LightGlue-ONNX/releases)。
 
