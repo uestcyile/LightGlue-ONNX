@@ -8,6 +8,7 @@
 
 ## 更新
 
+- **2023年7月13日**: 支持FlashAttention。
 - **2023年7月11日**: 支持混合精度。
 - **2023年7月4日**: 加了运行时间比较。
 - **2023年7月1日**: 支持特征提取`max_num_keypoints`。
@@ -16,7 +17,7 @@
 
 ## ONNX格式转换
 
-在转换ONNX模型之前，请安装原始LightGlue的[requirements](/requirements.txt)。(不需要安装[Flash Attention](https://github.com/HazyResearch/flash-attention))。
+在转换ONNX模型之前，请安装原始LightGlue的[requirements](/requirements.txt)。
 
 将DISK或SuperPoint和LightGlue模型转换为ONNX格式，请运行[`export.py`](/export.py)。提供了两种类型的ONNX转换：独立模型和组合模型(使用`--end2end`，比较方便)。
 
@@ -31,6 +32,7 @@ python export.py \
 
 - 虽然已指定了`--dynamic`，但建议使用适合您用例的图像大小转换。
 - 指定`--mp`使混合精度。
+- 指定`--flash`使FlashAttention。(ONNX格式转换需要安装[Flash Attention](https://github.com/HazyResearch/flash-attention)，但推理不需要。)
 
 如果您想立即尝试ONNX运行，可以下载已转换的[ONNX模型](https://github.com/fabio-sim/LightGlue-ONNX/releases)。
 
