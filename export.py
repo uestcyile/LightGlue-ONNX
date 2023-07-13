@@ -59,6 +59,11 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Whether to use mixed precision (CUDA only). Not supported when using the --safe option.",
     )
+    parser.add_argument(
+        "--flash",
+        action="store_true",
+        help="Whether to use Flash Attention (CUDA only). Flash Attention must be installed. Not supported when using the --safe option.",
+    )
 
     # Extractor-specific args:
     parser.add_argument(
@@ -83,6 +88,7 @@ def export_onnx(
     safe=False,
     dynamic=False,
     mp=False,
+    flash=False,
     max_num_keypoints=None,
 ):
     # Handle args
@@ -102,6 +108,7 @@ def export_onnx(
             f"{'_end2end' if end2end else ''}"
             f"{'_safe' if safe else ''}"
             f"{'_mp' if mp else ''}"
+            f"{'_flash' if flash else ''}"
             ".onnx"
         )
 
@@ -115,10 +122,10 @@ def export_onnx(
         image0 = rgb_to_grayscale(image0)
         image1 = rgb_to_grayscale(image1)
         extractor = SuperPoint(max_num_keypoints=max_num_keypoints).eval()
-        lightglue = LightGlue(extractor_type).eval()
+        lightglue = LightGlue(extractor_type, flash=flash).eval()
     elif extractor_type == "disk":
         extractor = DISK(max_num_keypoints=max_num_keypoints).eval()
-        lightglue = LightGlue(extractor_type).eval()
+        lightglue = LightGlue(extractor_type, flash=flash).eval()
 
         if torch.__version__ < "2.1":
             patch_disk_convolution_mode(extractor)
@@ -133,7 +140,7 @@ def export_onnx(
     ):
         register_aten_sdpa(opset_version=14)
 
-    if mp:
+    if mp or flash:
         assert torch.cuda.is_available(), "Mixed precision requires CUDA."
         image0, image1 = image0.to("cuda"), image1.to("cuda")
         extractor, lightglue = extractor.to("cuda"), lightglue.to("cuda")

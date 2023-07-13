@@ -8,6 +8,7 @@ Open Neural Network Exchange (ONNX) compatible implementation of [LightGlue: Loc
 
 ## Updates
 
+- **13 July 2023**: Add support for Flash Attention.
 - **11 July 2023**: Add support for mixed precision.
 - **4 July 2023**: Add inference time comparisons.
 - **1 July 2023**: Add support for extractor `max_num_keypoints`.
@@ -16,7 +17,7 @@ Open Neural Network Exchange (ONNX) compatible implementation of [LightGlue: Loc
 
 ## ONNX Export
 
-Prior to exporting the ONNX models, please install the [requirements](/requirements.txt) of the original LightGlue repository. ([Flash Attention](https://github.com/HazyResearch/flash-attention) does not need to be installed.)
+Prior to exporting the ONNX models, please install the [requirements](/requirements.txt) of the original LightGlue repository.
 
 To convert the DISK or SuperPoint and LightGlue models to ONNX, run [`export.py`](/export.py). We provide two types of ONNX exports: individual standalone models, and a combined end-to-end pipeline (recommended for convenience) with the `--end2end` flag.
 
@@ -32,6 +33,7 @@ python export.py \
 - Exporting individually can be useful when intermediate outputs can be cached or precomputed. On the other hand, the end-to-end pipeline can be more convenient.
 - Although dynamic axes have been specified, it is recommended to export your own ONNX model with the appropriate input image sizes of your use case.
 - Use the `--mp` option to export in mixed precision for more speed gains.
+- Enable flash attention with the `--flash` option for even faster speeds. ([Flash Attention](https://github.com/HazyResearch/flash-attention) must be installed for export but is not required during inference.)
 
 If you would like to try out inference right away, you can download ONNX models that have already been exported [here](https://github.com/fabio-sim/LightGlue-ONNX/releases).
 
@@ -91,7 +93,6 @@ As the ONNX Runtime has limited support for features like dynamic control flow, 
 ### LightGlue Keypoint Matching
 
 - Since dynamic control flow has limited support in ONNX tracing, by extension, early stopping and adaptive point pruning (the `depth_confidence` and `width_confidence` parameters) are also difficult to export to ONNX.
-- Flash Attention is turned off.
 - Note that the end-to-end version, despite its name, still requires the postprocessing (filtering valid matches) function outside the ONNX model since the `scales` variables need to be passed.
 
 Additionally, the outputs of the ONNX models differ slightly from the original PyTorch models (by a small error on the magnitude of `1e-6` to `1e-5` for the scores/descriptors). Although the cause is still unclear, this could be due to differing implementations or modified dtypes.
