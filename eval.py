@@ -52,6 +52,11 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Whether to enable mixed precision (CUDA only).",
     )
+    parser.add_argument(
+        "--flash",
+        action="store_true",
+        help="Whether to use Flash Attention (CUDA only). Flash Attention must be installed.",
+    )
 
     # ONNXRuntime-specific args
     parser.add_argument(
@@ -85,6 +90,7 @@ def create_models(
     max_num_keypoints=512,
     device="cuda",
     mp=False,
+    flash=False,
     extractor_path=None,
     lightglue_path=None,
 ):
@@ -96,7 +102,7 @@ def create_models(
         elif extractor_type == "disk":
             extractor = DISK(max_num_keypoints=max_num_keypoints).eval().to(device)
 
-        lightglue = LightGlue(extractor_type, mp=mp).eval().to(device)
+        lightglue = LightGlue(extractor_type, mp=mp, flash=flash).eval().to(device)
     elif framework == "ort":
         sess_opts = ort.SessionOptions()
         sess_opts.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
@@ -119,7 +125,10 @@ def create_models(
 
         if lightglue_path is None:
             lightglue_path = (
-                f"weights/{extractor_type}_lightglue" f"{'_mp' if mp else ''}" ".onnx"
+                f"weights/{extractor_type}_lightglue"
+                f"{'_mp' if mp else ''}"
+                f"{'_flash' if flash else ''}"
+                ".onnx"
             )
         lightglue = ort.InferenceSession(
             lightglue_path,
@@ -201,6 +210,7 @@ def evaluate(
     max_num_keypoints=512,
     device="cuda",
     mp=False,
+    flash=False,
     extractor_path=None,
     lightglue_path=None,
 ):
@@ -213,6 +223,7 @@ def evaluate(
         max_num_keypoints=max_num_keypoints,
         device=device,
         mp=mp,
+        flash=flash,
         extractor_path=extractor_path,
         lightglue_path=lightglue_path,
     )
