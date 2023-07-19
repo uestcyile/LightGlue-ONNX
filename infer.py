@@ -41,6 +41,11 @@ def parse_args() -> argparse.Namespace:
         help="Sample image size for ONNX tracing. If a single integer is given, resize the longer side of the images to this value. Otherwise, please provide two integers (height width) to resize both images to this size, or four integers (height width height width).",
     )
     parser.add_argument(
+        "--trt",
+        action="store_true",
+        help="Whether to use TensorRT (experimental). Note that the ONNX model must NOT be exported with --mp or --flash.",
+    )
+    parser.add_argument(
         "--viz", action="store_true", help="Whether to visualize the results."
     )
     return parser.parse_args()
@@ -52,6 +57,7 @@ def infer(
     extractor_type: str,
     extractor_path=None,
     img_size=512,
+    trt=False,
     viz=False,
 ):
     # Handle args
@@ -84,11 +90,23 @@ def infer(
         )
 
     # Load ONNX models
+    providers = ["CUDAExecutionProvider", "CPUExecutionProvider"]
+    if trt:
+        providers = [
+            (
+                "TensorrtExecutionProvider",
+                {
+                    "trt_fp16_enable": True,
+                    "trt_engine_cache_enable": True,
+                    "trt_engine_cache_path": "weights/cache",
+                },
+            )
+        ] + providers
 
     runner = LightGlueRunner(
         extractor_path=extractor_path,
         lightglue_path=lightglue_path,
-        providers=["CUDAExecutionProvider", "CPUExecutionProvider"],
+        providers=providers,
     )
 
     # Run inference

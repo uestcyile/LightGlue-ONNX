@@ -2,12 +2,13 @@
 
 # LightGlue ONNX
 
-Open Neural Network Exchange (ONNX) compatible implementation of [LightGlue: Local Feature Matching at Light Speed](https://github.com/cvg/LightGlue). The ONNX model format allows for interoperability across different platforms with support for multiple execution providers, and removes Python-specific dependencies such as PyTorch.
+Open Neural Network Exchange (ONNX) compatible implementation of [LightGlue: Local Feature Matching at Light Speed](https://github.com/cvg/LightGlue). The ONNX model format allows for interoperability across different platforms with support for multiple execution providers, and removes Python-specific dependencies such as PyTorch. Experimental support for TensorRT.
 
 <p align="center"><a href="https://arxiv.org/abs/2306.13643"><img src="assets/easy_hard.jpg" alt="LightGlue figure" width=80%></a>
 
 ## Updates
 
+- **19 July 2023**: Add support for TensorRT.
 - **13 July 2023**: Add support for Flash Attention.
 - **11 July 2023**: Add support for mixed precision.
 - **4 July 2023**: Add inference time comparisons.
@@ -76,6 +77,32 @@ python infer.py \
   --viz
 ```
 
+## TensorRT Support (Experimental)
+
+TensorRT inference is supported via the TensorRT Execution Provider in ONNXRuntime.
+
+```bash
+python tools/symbolic_shape_infer.py \
+  --input weights/superpoint.onnx \
+  --output weights/superpoint.onnx \
+  --auto_merge
+
+python tools/symbolic_shape_infer.py \
+  --input weights/superpoint_lightglue.onnx \
+  --output weights/superpoint_lightglue.onnx \
+  --auto_merge
+
+CUDA_MODULE_LOADING=LAZY && python infer.py \
+  --img_paths assets/DSC_0410.JPG assets/DSC_0411.JPG \
+  --lightglue_path  weights/superpoint_lightglue.onnx \
+  --extractor_type superpoint \
+  --extractor_path weights/superpoint.onnx \
+  --trt \
+  --viz
+```
+
+The first run will take longer because TensorRT needs to initialise the `.engine` and `.profile` files. Subsequent runs should use the cached files. Note that the ONNX models should not be exported with `--mp` or `--flash`. Only the SuperPoint extractor type is supported. Note that you might want to export with static input image shapes and `--max_num_keypoints` for better runtime optimisation.
+
 ## Inference Time Comparison
 
 In general, for smaller numbers of keypoints the ONNX version performs similarly to the PyTorch implementation. However, as the number of keypoints increases, the PyTorch CUDA implementation is faster, whereas ONNX is faster overall for CPU inference. See [EVALUATION.md](/evaluation/EVALUATION.md) for technical details.
@@ -99,7 +126,6 @@ Additionally, the outputs of the ONNX models differ slightly from the original P
 
 ## Possible Future Work
 
-- **Support for TensorRT**: Appears to be currently blocked by unsupported Einstein summation operations (`torch.einsum()`) in TensorRT - Thanks to [Shidqiet](https://github.com/Shidqiet)'s investigation.
 - **Support for batch size > 1**: Blocked by the fact that different images can have varying numbers of keypoints. Perhaps max-length padding?
 - **Support for dynamic control flow**: Investigating *script-mode* ONNX export instead of *trace-mode*.
 - **Quantization Support**
