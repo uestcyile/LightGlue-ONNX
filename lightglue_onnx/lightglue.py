@@ -72,8 +72,8 @@ class FastAttention(nn.Module):
             return F.scaled_dot_product_attention(q, k, v)
         else:
             s = self.s
-            attn = F.softmax(torch.einsum("...id,...jd->...ij", q, k) * s, -1)
-            return torch.einsum("...ij,...jd->...id", attn, v)
+            attn = F.softmax(torch.einsum("bnid,bnjd->bnij", q, k) * s, -1)
+            return torch.einsum("bnij,bnjd->bnid", attn, v)
 
 
 class FlashAttention(nn.Module):
