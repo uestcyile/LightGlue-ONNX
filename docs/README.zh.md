@@ -2,12 +2,13 @@
 
 # LightGlue ONNX
 
-支持Open Neural Network Exchange (ONNX)的[LightGlue: Local Feature Matching at Light Speed](https://github.com/cvg/LightGlue)实施。ONNX格式支持不同平台之间的互操作性，并支持多个执行提供程序，同时消除了Python特定的依赖项，比如PyTorch。
+支持Open Neural Network Exchange (ONNX)的[LightGlue: Local Feature Matching at Light Speed](https://github.com/cvg/LightGlue)实施。ONNX格式支持不同平台之间的互操作性，并支持多个执行提供程序，同时消除了Python特定的依赖项，比如PyTorch。支持TensorRT(实验性)。
 
 <p align="center"><a href="https://arxiv.org/abs/2306.13643"><img src="../assets/easy_hard.jpg" alt="LightGlue figure" width=80%></a>
 
 ## 更新
 
+- **2023年7月19日**: 支持TensorRT。
 - **2023年7月13日**: 支持FlashAttention。
 - **2023年7月11日**: 支持混合精度。
 - **2023年7月4日**: 加了运行时间比较。
@@ -72,6 +73,32 @@ python infer.py \
   --extractor_path weights/superpoint.onnx \
   --viz
 ```
+
+## TensorRT (实验性)
+
+TensorRT推理使用ONNXRuntime的TensorRT Execution Provider。
+
+```bash
+python tools/symbolic_shape_infer.py \
+  --input weights/superpoint.onnx \
+  --output weights/superpoint.onnx \
+  --auto_merge
+
+python tools/symbolic_shape_infer.py \
+  --input weights/superpoint_lightglue.onnx \
+  --output weights/superpoint_lightglue.onnx \
+  --auto_merge
+
+CUDA_MODULE_LOADING=LAZY && python infer.py \
+  --img_paths assets/DSC_0410.JPG assets/DSC_0411.JPG \
+  --lightglue_path  weights/superpoint_lightglue.onnx \
+  --extractor_type superpoint \
+  --extractor_path weights/superpoint.onnx \
+  --trt \
+  --viz
+```
+
+第一次运行时，TensorRT需要一点时间始化`.engine`和`.profile`。后续运行应使用cache。请注意，ONNX模型不应使用`--mp`或`--flash`转换。只支持SuperPoint特征提取。
 
 ## 推理时间比较
 
