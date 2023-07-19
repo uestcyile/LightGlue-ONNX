@@ -94,14 +94,14 @@ python tools/symbolic_shape_infer.py \
 
 CUDA_MODULE_LOADING=LAZY && python infer.py \
   --img_paths assets/DSC_0410.JPG assets/DSC_0411.JPG \
-  --lightglue_path  weights/superpoint_lightglue.onnx \
+  --lightglue_path weights/superpoint_lightglue.onnx \
   --extractor_type superpoint \
   --extractor_path weights/superpoint.onnx \
   --trt \
   --viz
 ```
 
-The first run will take longer because TensorRT needs to initialise the `.engine` and `.profile` files. Subsequent runs should use the cached files. Note that the ONNX models should not be exported with `--mp` or `--flash`. Only the SuperPoint extractor type is supported. Note that you might want to export with static input image shapes and `--max_num_keypoints` for better runtime optimisation.
+The first run will take longer because TensorRT needs to initialise the `.engine` and `.profile` files. Subsequent runs should use the cached files. Note that the ONNX models should not be exported with `--mp` or `--flash`. Only the SuperPoint extractor type is supported. Note that you might want to export with static input image shapes and `--max_num_keypoints` for better runtime optimisation. The same methodology can be applied to end-to-end models.
 
 ## Inference Time Comparison
 
