@@ -57,6 +57,11 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Whether to use Flash Attention (CUDA only). Flash Attention must be installed.",
     )
+    parser.add_argument(
+        "--trt",
+        action="store_true",
+        help="Whether to use TensorRT (experimental).",
+    )
 
     # ONNXRuntime-specific args
     parser.add_argument(
@@ -91,6 +96,7 @@ def create_models(
     device="cuda",
     mp=False,
     flash=False,
+    trt=False,
     extractor_path=None,
     lightglue_path=None,
 ):
@@ -111,12 +117,14 @@ def create_models(
             if device == "cuda"
             else ["CPUExecutionProvider"]
         )
+
         if extractor_path is None:
             extractor_path = (
                 f"weights/{extractor_type}_{max_num_keypoints}"
                 f"{'_mp' if mp else ''}"
                 ".onnx"
             )
+
         extractor = ort.InferenceSession(
             extractor_path,
             sess_options=sess_opts,
@@ -130,6 +138,23 @@ def create_models(
                 f"{'_flash' if flash else ''}"
                 ".onnx"
             )
+
+        if trt:
+            assert device == "cuda", "TensorRT is only supported on CUDA devices."
+            providers = [
+                (
+                    "TensorrtExecutionProvider",
+                    {
+                        "trt_fp16_enable": True,
+                        "trt_engine_cache_enable": True,
+                        "trt_engine_cache_path": "weights/cache",
+                        "trt_profile_min_shapes": f"kpts0:1x1x2,kpts1:1x1x2,desc0:1x1x256,desc1:1x1x256",
+                        "trt_profile_opt_shapes": f"kpts0:1x{max_num_keypoints}x2,kpts1:1x{max_num_keypoints}x2,desc0:1x{max_num_keypoints}x256,desc1:1x{max_num_keypoints}x256",
+                        "trt_profile_max_shapes": f"kpts0:1x{max_num_keypoints}x2,kpts1:1x{max_num_keypoints}x2,desc0:1x{max_num_keypoints}x256,desc1:1x{max_num_keypoints}x256",
+                    },
+                )
+            ] + providers
+
         lightglue = ort.InferenceSession(
             lightglue_path,
             sess_options=sess_opts,
@@ -211,6 +236,7 @@ def evaluate(
     device="cuda",
     mp=False,
     flash=False,
+    trt=False,
     extractor_path=None,
     lightglue_path=None,
 ):
@@ -224,6 +250,7 @@ def evaluate(
         device=device,
         mp=mp,
         flash=flash,
+        trt=trt,
         extractor_path=extractor_path,
         lightglue_path=lightglue_path,
     )
