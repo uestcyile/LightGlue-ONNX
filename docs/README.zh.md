@@ -2,7 +2,7 @@
 
 # LightGlue ONNX
 
-支持Open Neural Network Exchange (ONNX)的[LightGlue: Local Feature Matching at Light Speed](https://github.com/cvg/LightGlue)实施。ONNX格式支持不同平台之间的互操作性，并支持多个执行提供程序，同时消除了Python特定的依赖项，比如PyTorch。支持TensorRT(实验性)。
+支持Open Neural Network Exchange (ONNX)的[LightGlue: Local Feature Matching at Light Speed](https://github.com/cvg/LightGlue)实施。ONNX格式支持不同平台之间的互操作性，并支持多个执行提供程序，同时消除了Python特定的依赖项，比如PyTorch。支持TensorRT和OpenVINO。
 
 <p align="center"><a href="https://arxiv.org/abs/2306.13643"><img src="../assets/easy_hard.jpg" alt="LightGlue figure" width=80%></a>
 
@@ -54,6 +54,7 @@ runner = LightGlueRunner(
     extractor_path="weights/superpoint.onnx",
     lightglue_path="weights/superpoint_lightglue.onnx",
     providers=["CUDAExecutionProvider", "CPUExecutionProvider"],
+    # TensorrtExecutionProvider, OpenVINOExecutionProvider
 )
 
 # Run inference
@@ -74,9 +75,9 @@ python infer.py \
   --viz
 ```
 
-## TensorRT (实验性)
+## TensorRT
 
-TensorRT推理使用ONNXRuntime的TensorRT Execution Provider。
+TensorRT推理使用ONNXRuntime的TensorRT Execution Provider。请先安装[TensorRT](https://docs.nvidia.com/deeplearning/tensorrt/install-guide/index.html)。
 
 ```bash
 python tools/symbolic_shape_infer.py \
