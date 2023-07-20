@@ -9,3 +9,5 @@ lightglue/_flash/
 *-checkpoint.ipynb
 *.pth
 *.onnx
+*.engine
+*.profile

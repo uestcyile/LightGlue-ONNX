@@ -2,7 +2,7 @@
 
 # LightGlue ONNX
 
-Open Neural Network Exchange (ONNX) compatible implementation of [LightGlue: Local Feature Matching at Light Speed](https://github.com/cvg/LightGlue). The ONNX model format allows for interoperability across different platforms with support for multiple execution providers, and removes Python-specific dependencies such as PyTorch. Experimental support for TensorRT.
+Open Neural Network Exchange (ONNX) compatible implementation of [LightGlue: Local Feature Matching at Light Speed](https://github.com/cvg/LightGlue). The ONNX model format allows for interoperability across different platforms with support for multiple execution providers, and removes Python-specific dependencies such as PyTorch. Supports TensorRT and OpenVINO.
 
 <p align="center"><a href="https://arxiv.org/abs/2306.13643"><img src="assets/easy_hard.jpg" alt="LightGlue figure" width=80%></a>
 
@@ -57,6 +57,7 @@ runner = LightGlueRunner(
     extractor_path="weights/superpoint.onnx",
     lightglue_path="weights/superpoint_lightglue.onnx",
     providers=["CUDAExecutionProvider", "CPUExecutionProvider"],
+    # TensorrtExecutionProvider, OpenVINOExecutionProvider
 )
 
 # Run inference
@@ -77,9 +78,9 @@ python infer.py \
   --viz
 ```
 
-## TensorRT Support (Experimental)
+## TensorRT Support
 
-TensorRT inference is supported via the TensorRT Execution Provider in ONNXRuntime.
+TensorRT inference is supported via the TensorRT Execution Provider in ONNXRuntime. Please follow the [official documentation](https://docs.nvidia.com/deeplearning/tensorrt/install-guide/index.html) to install TensorRT. The exported ONNX models (whether standalone or end-to-end) must undergo [shape inference](/tools/symbolic_shape_infer.py) for compatibility with TensorRT:
 
 ```bash
 python tools/symbolic_shape_infer.py \
@@ -101,7 +102,7 @@ CUDA_MODULE_LOADING=LAZY && python infer.py \
   --viz
 ```
 
-The first run will take longer because TensorRT needs to initialise the `.engine` and `.profile` files. Subsequent runs should use the cached files. Note that the ONNX models should not be exported with `--mp` or `--flash`. Only the SuperPoint extractor type is supported. Note that you might want to export with static input image shapes and `--max_num_keypoints` for better runtime optimisation. The same methodology can be applied to end-to-end models.
+The first run will take longer because TensorRT needs to initialise the `.engine` and `.profile` files. Subsequent runs should use the cached files. Note that the ONNX models should not be exported with `--mp` or `--flash`. Only the SuperPoint extractor type is supported.
 
 ## Inference Time Comparison
 
