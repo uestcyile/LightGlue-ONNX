@@ -102,7 +102,7 @@ CUDA_MODULE_LOADING=LAZY && python infer.py \
   --viz
 ```
 
-The first run will take longer because TensorRT needs to initialise the `.engine` and `.profile` files. Subsequent runs should use the cached files. Note that the ONNX models should not be exported with `--mp` or `--flash`. Only the SuperPoint extractor type is supported.
+The first run will take longer because TensorRT needs to initialise the `.engine` and `.profile` files. It is recommended to pass the options [here](/evaluation/EVALUATION.md#tensorrt) to ONNXRuntime. Subsequent runs should use the cached files. Note that the ONNX models should not be exported with `--mp` or `--flash`. Only the SuperPoint extractor type is supported.
 
 ## Inference Time Comparison
 
