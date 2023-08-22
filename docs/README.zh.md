@@ -1,3 +1,7 @@
+[![ONNX](https://img.shields.io/badge/ONNX-grey)](https://onnx.ai/)
+[![TensorRT](https://img.shields.io/badge/TensorRT-76B900)](https://developer.nvidia.com/tensorrt)
+[![GitHub Repo stars](https://img.shields.io/github/stars/fabio-sim/LightGlue-ONNX)](https://github.com/fabio-sim/LightGlue-ONNX/stargazers)
+[![GitHub all releases](https://img.shields.io/github/downloads/fabio-sim/LightGlue-ONNX/total)](https://github.com/fabio-sim/LightGlue-ONNX/releases)
 <div align="right"> <a href="https://github.com/fabio-sim/LightGlue-ONNX">English</a> | 简体中文</div>
 
 # LightGlue ONNX
@@ -16,28 +20,31 @@
 - **2023年6月30日**: 支持DISK特征提取。
 - **2023年6月28日**: 加了端到端SuperPoint+LightGlue转换。
 
-## ONNX格式转换
+## 🔥 ONNX格式转换
 
 在转换ONNX模型之前，请安装原始LightGlue的[requirements](/requirements.txt)。
 
 将DISK或SuperPoint和LightGlue模型转换为ONNX格式，请运行[`export.py`](/export.py)。提供了两种类型的ONNX转换：独立模型和组合模型(使用`--end2end`，比较方便)。
 
-```bash
+<details>
+<summary>转换例子</summary>
+<pre>
 python export.py \
   --img_size 512 \
   --extractor_type superpoint \
   --extractor_path weights/superpoint.onnx \
   --lightglue_path weights/superpoint_lightglue.onnx \
   --dynamic
-```
+</pre>
 
 - 虽然已指定了`--dynamic`，但建议使用适合您用例的图像大小转换。
 - 指定`--mp`使混合精度。
-- 指定`--flash`使FlashAttention。(ONNX格式转换需要安装[Flash Attention](https://github.com/HazyResearch/flash-attention)，但推理不需要。)
+- 指定`--flash`使FlashAttention。(ONNX格式转换需要安装[Flash Attention](https://github.com/Dao-AILab/flash-attention)，但推理不需要。)
+</details>
 
 如果您想立即尝试ONNX运行，可以下载已转换的[ONNX模型](https://github.com/fabio-sim/LightGlue-ONNX/releases)。
 
-## ONNX推理
+## ⚡ ONNX推理
 
 有了ONNX模型，就可以使用ONNX Runtime进行推理(请先安装[requirements-onnx.txt](/requirements-onnx.txt))。
 
@@ -65,7 +72,9 @@ m_kpts0, m_kpts1 = runner.run(image0, image1, scales0, scales1)
 
 您也可以运行[`infer.py`](/infer.py)。
 
-```bash
+<details>
+<summary>推理例子</summary>
+<pre>
 python infer.py \
   --img_paths assets/DSC_0410.JPG assets/DSC_0411.JPG \
   --img_size 512 \
@@ -73,31 +82,33 @@ python infer.py \
   --extractor_type superpoint \
   --extractor_path weights/superpoint.onnx \
   --viz
-```
+</pre>
+</details>
 
-## TensorRT
+## 🚀 TensorRT
 
 TensorRT推理使用ONNXRuntime的TensorRT Execution Provider。请先安装[TensorRT](https://docs.nvidia.com/deeplearning/tensorrt/install-guide/index.html)。
 
-```bash
+<details>
+<summary>TensorRT例子</summary>
+<pre>
 python tools/symbolic_shape_infer.py \
   --input weights/superpoint.onnx \
   --output weights/superpoint.onnx \
-  --auto_merge
-
+  --auto_merge<br>
 python tools/symbolic_shape_infer.py \
   --input weights/superpoint_lightglue.onnx \
   --output weights/superpoint_lightglue.onnx \
-  --auto_merge
-
+  --auto_merge<br>
 CUDA_MODULE_LOADING=LAZY && python infer.py \
   --img_paths assets/DSC_0410.JPG assets/DSC_0411.JPG \
-  --lightglue_path  weights/superpoint_lightglue.onnx \
+  --lightglue_path weights/superpoint_lightglue.onnx \
   --extractor_type superpoint \
   --extractor_path weights/superpoint.onnx \
   --trt \
   --viz
-```
+</pre>
+</details>
 
 第一次运行时，TensorRT需要一点时间始化`.engine`和`.profile`。后续运行应使用cache。请注意，ONNX模型不应使用`--mp`或`--flash`转换。只支持SuperPoint特征提取。
 
