@@ -1,5 +1,10 @@
 <div align="right"> English | <a href="https://github.com/fabio-sim/LightGlue-ONNX/blob/main/docs/README.zh.md">简体中文</a></div>
 
+[![ONNX](https://img.shields.io/badge/ONNX-grey)](https://onnx.ai/)
+[![TensorRT](https://img.shields.io/badge/TensorRT-76B900)](https://developer.nvidia.com/tensorrt)
+[![GitHub Repo stars](https://img.shields.io/github/stars/fabio-sim/LightGlue-ONNX)](https://github.com/fabio-sim/LightGlue-ONNX/stargazers)
+[![GitHub all releases](https://img.shields.io/github/downloads/fabio-sim/LightGlue-ONNX/total)](https://github.com/fabio-sim/LightGlue-ONNX/releases)
+
 # LightGlue ONNX
 
 Open Neural Network Exchange (ONNX) compatible implementation of [LightGlue: Local Feature Matching at Light Speed](https://github.com/cvg/LightGlue). The ONNX model format allows for interoperability across different platforms with support for multiple execution providers, and removes Python-specific dependencies such as PyTorch. Supports TensorRT and OpenVINO.
@@ -16,29 +21,32 @@ Open Neural Network Exchange (ONNX) compatible implementation of [LightGlue: Loc
 - **30 June 2023**: Add support for DISK extractor.
 - **28 June 2023**: Add end-to-end SuperPoint+LightGlue export & inference pipeline.
 
-## ONNX Export
+## 🔥 ONNX Export
 
 Prior to exporting the ONNX models, please install the [requirements](/requirements.txt) of the original LightGlue repository.
 
 To convert the DISK or SuperPoint and LightGlue models to ONNX, run [`export.py`](/export.py). We provide two types of ONNX exports: individual standalone models, and a combined end-to-end pipeline (recommended for convenience) with the `--end2end` flag.
 
-```bash
+<details>
+<summary>Export Example</summary>
+<pre>
 python export.py \
   --img_size 512 \
   --extractor_type superpoint \
   --extractor_path weights/superpoint.onnx \
   --lightglue_path weights/superpoint_lightglue.onnx \
   --dynamic
-```
+</pre>
 
 - Exporting individually can be useful when intermediate outputs can be cached or precomputed. On the other hand, the end-to-end pipeline can be more convenient.
 - Although dynamic axes have been specified, it is recommended to export your own ONNX model with the appropriate input image sizes of your use case.
 - Use the `--mp` option to export in mixed precision for more speed gains.
-- Enable flash attention with the `--flash` option for even faster speeds. ([Flash Attention](https://github.com/HazyResearch/flash-attention) must be installed for export but is not required during inference.)
+- Enable flash attention with the `--flash` option for even faster speeds. ([Flash Attention](https://github.com/Dao-AILab/flash-attention) must be installed for export but is not required during inference.)
+</details>
 
 If you would like to try out inference right away, you can download ONNX models that have already been exported [here](https://github.com/fabio-sim/LightGlue-ONNX/releases).
 
-## ONNX Inference
+## ⚡ ONNX Inference
 
 With ONNX models in hand, one can perform inference on Python using ONNX Runtime (see [requirements-onnx.txt](/requirements-onnx.txt)).
 
@@ -68,7 +76,9 @@ Note that the output keypoints have already been rescaled back to the original i
 
 Alternatively, you can also run [`infer.py`](/infer.py).
 
-```bash
+<details>
+<summary>Inference Example</summary>
+<pre>
 python infer.py \
   --img_paths assets/DSC_0410.JPG assets/DSC_0411.JPG \
   --img_size 512 \
@@ -76,23 +86,24 @@ python infer.py \
   --extractor_type superpoint \
   --extractor_path weights/superpoint.onnx \
   --viz
-```
+</pre>
+</details>
 
-## TensorRT Support
+## 🚀 TensorRT Support
 
 TensorRT inference is supported via the TensorRT Execution Provider in ONNXRuntime. Please follow the [official documentation](https://docs.nvidia.com/deeplearning/tensorrt/install-guide/index.html) to install TensorRT. The exported ONNX models (whether standalone or end-to-end) must undergo [shape inference](/tools/symbolic_shape_infer.py) for compatibility with TensorRT:
 
-```bash
+<details>
+<summary>TensorRT Example</summary>
+<pre>
 python tools/symbolic_shape_infer.py \
   --input weights/superpoint.onnx \
   --output weights/superpoint.onnx \
-  --auto_merge
-
+  --auto_merge<br>
 python tools/symbolic_shape_infer.py \
   --input weights/superpoint_lightglue.onnx \
   --output weights/superpoint_lightglue.onnx \
-  --auto_merge
-
+  --auto_merge<br>
 CUDA_MODULE_LOADING=LAZY && python infer.py \
   --img_paths assets/DSC_0410.JPG assets/DSC_0411.JPG \
   --lightglue_path weights/superpoint_lightglue.onnx \
@@ -100,11 +111,12 @@ CUDA_MODULE_LOADING=LAZY && python infer.py \
   --extractor_path weights/superpoint.onnx \
   --trt \
   --viz
-```
+</pre>
+</details>
 
 The first run will take longer because TensorRT needs to initialise the `.engine` and `.profile` files. It is recommended to pass the options [here](/evaluation/EVALUATION.md#tensorrt) to ONNXRuntime. Subsequent runs should use the cached files. Note that the ONNX models should not be exported with `--mp` or `--flash`. Only the SuperPoint extractor type is supported.
 
-## Inference Time Comparison
+## ⏱️ Inference Time Comparison
 
 In general, for smaller numbers of keypoints the ONNX version performs similarly to the PyTorch implementation. However, as the number of keypoints increases, the PyTorch CUDA implementation is faster, whereas ONNX is faster overall for CPU inference. See [EVALUATION.md](/evaluation/EVALUATION.md) for technical details.
 
@@ -124,6 +136,8 @@ As the ONNX Runtime has limited support for features like dynamic control flow, 
 - Note that the end-to-end version, despite its name, still requires the postprocessing (filtering valid matches) function outside the ONNX model since the `scales` variables need to be passed.
 
 Additionally, the outputs of the ONNX models differ slightly from the original PyTorch models (by a small error on the magnitude of `1e-6` to `1e-5` for the scores/descriptors). Although the cause is still unclear, this could be due to differing implementations or modified dtypes.
+
+Note that SuperPoint is under a non-commercial license.
 
 ## Possible Future Work
 
