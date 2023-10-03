@@ -22,7 +22,7 @@ def parse_args() -> argparse.Namespace:
         help="Path to the root of the MegaDepth dataset.",
     )
     parser.add_argument(
-        "--img_size", type=int, default=512, required=False, help="Image size."
+        "--img_size", type=int, default=1024, required=False, help="Image size."
     )
     parser.add_argument(
         "--extractor_type",
@@ -55,7 +55,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--flash",
         action="store_true",
-        help="Whether to use Flash Attention (CUDA only). Flash Attention must be installed.",
+        help="Whether to use Flash Attention (CUDA only).",
     )
     parser.add_argument(
         "--trt",
@@ -111,7 +111,6 @@ def create_models(
         lightglue = LightGlue(extractor_type, mp=mp, flash=flash).eval().to(device)
     elif framework == "ort":
         sess_opts = ort.SessionOptions()
-        sess_opts.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
         providers = (
             ["CUDAExecutionProvider", "CPUExecutionProvider"]
             if device == "cuda"
@@ -119,25 +118,15 @@ def create_models(
         )
 
         if extractor_path is None:
-            extractor_path = (
-                f"weights/{extractor_type}_{max_num_keypoints}"
-                f"{'_mp' if mp else ''}"
-                ".onnx"
-            )
+            extractor_path = f"weights/{extractor_type}_{max_num_keypoints}.onnx"
 
         extractor = ort.InferenceSession(
             extractor_path,
-            sess_options=sess_opts,
             providers=providers,
         )
 
         if lightglue_path is None:
-            lightglue_path = (
-                f"weights/{extractor_type}_lightglue"
-                f"{'_mp' if mp else ''}"
-                f"{'_flash' if flash else ''}"
-                ".onnx"
-            )
+            lightglue_path = f"weights/{extractor_type}_lightglue.onnx"
 
         if trt:
             assert device == "cuda", "TensorRT is only supported on CUDA devices."
@@ -148,9 +137,6 @@ def create_models(
                         "trt_fp16_enable": True,
                         "trt_engine_cache_enable": True,
                         "trt_engine_cache_path": "weights/cache",
-                        "trt_profile_min_shapes": f"kpts0:1x1x2,kpts1:1x1x2,desc0:1x1x256,desc1:1x1x256",
-                        "trt_profile_opt_shapes": f"kpts0:1x{max_num_keypoints}x2,kpts1:1x{max_num_keypoints}x2,desc0:1x{max_num_keypoints}x256,desc1:1x{max_num_keypoints}x256",
-                        "trt_profile_max_shapes": f"kpts0:1x{max_num_keypoints}x2,kpts1:1x{max_num_keypoints}x2,desc0:1x{max_num_keypoints}x256,desc1:1x{max_num_keypoints}x256",
                     },
                 )
             ] + providers
@@ -169,13 +155,8 @@ def measure_inference(
 ) -> float:
     if framework == "torch":
         # Feature extraction time is not measured
-        feats0, feats1 = extractor({"image": image0}), extractor({"image": image1})
-        pred = {
-            **{k + "0": v for k, v in feats0.items()},
-            **{k + "1": v for k, v in feats1.items()},
-            "image0": image0,
-            "image1": image1,
-        }
+        feats0 = extractor.extract(image0)
+        feats1 = extractor.extract(image1)
 
         # Measure only matching time
         start = torch.cuda.Event(enable_timing=True)
@@ -183,7 +164,7 @@ def measure_inference(
 
         start.record()
         with torch.no_grad():
-            result = lightglue(pred)
+            result = lightglue({"image0": feats0, "image1": feats1})
         end.record()
         torch.cuda.synchronize()
 
@@ -203,7 +184,7 @@ def measure_inference(
             "desc0": desc0,
             "desc1": desc1,
         }
-        lightglue_outputs = ["matches0", "matches1", "mscores0", "mscores1"]
+        lightglue_outputs = ["matches0", "mscores0"]
 
         if device == "cuda":
             # Prepare IO-Bindings
@@ -230,7 +211,7 @@ def measure_inference(
 def evaluate(
     framework,
     megadepth_path=Path("megadepth_test_1500"),
-    img_size=512,
+    img_size=1024,
     extractor_type="superpoint",
     max_num_keypoints=512,
     device="cuda",
@@ -271,7 +252,7 @@ def evaluate(
 
     # Measure
     timings = []
-    for image0, image1 in tqdm(image_pairs):
+    for image0, image1 in tqdm(image_pairs[10:]):
         image0, _ = load_image(str(image0), resize=img_size)
         image1, _ = load_image(str(image1), resize=img_size)
 

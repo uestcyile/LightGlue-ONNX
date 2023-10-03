@@ -43,7 +43,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--trt",
         action="store_true",
-        help="Whether to use TensorRT (experimental). Note that the ONNX model must NOT be exported with --mp or --flash.",
+        help="Whether to use TensorRT (experimental).",
     )
     parser.add_argument(
         "--viz", action="store_true", help="Whether to visualize the results."

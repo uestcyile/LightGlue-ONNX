@@ -40,45 +40,44 @@
 # --------------------------------------------------------------------*/
 # %BANNER_END%
 
+# Adapted by Remi Pautrat, Philipp Lindenberger
+# Adapted by Fabio Milentiansen Sim
+
 from typing import Tuple
 
 import torch
 from torch import nn
 
 
-def max_pool(x, nms_radius: int):
-    return torch.nn.functional.max_pool2d(
-        x, kernel_size=nms_radius * 2 + 1, stride=1, padding=nms_radius
-    )
-
-
 def simple_nms(scores, nms_radius: int):
     """Fast Non-maximum suppression to remove nearby points"""
-    # assert nms_radius >= 0
-    scores = scores[None]
+    assert nms_radius >= 0
+
+    def max_pool(x):
+        return torch.nn.functional.max_pool2d(
+            x, kernel_size=nms_radius * 2 + 1, stride=1, padding=nms_radius
+        )
+
+    scores = scores[None]  # max_pool bug
     zeros = torch.zeros_like(scores)
-    max_mask = scores == max_pool(scores, nms_radius)
+    max_mask = scores == max_pool(scores)
     for _ in range(2):
-        supp_mask = max_pool(max_mask.float(), nms_radius) > 0
+        supp_mask = max_pool(max_mask.float()) > 0
         supp_scores = torch.where(supp_mask, zeros, scores)
-        new_max_mask = supp_scores == max_pool(supp_scores, nms_radius)
+        new_max_mask = supp_scores == max_pool(supp_scores)
         max_mask = max_mask | (new_max_mask & (~supp_mask))
     return torch.where(max_mask, scores, zeros)[0]
 
 
-def remove_borders(keypoints, scores, border: int, height: int, width: int):
-    """Removes keypoints too close to the border"""
-    mask_h = (keypoints[:, 1] >= border) & (keypoints[:, 1] < (height - border))
-    mask_w = (keypoints[:, 2] >= border) & (keypoints[:, 2] < (width - border))
-    mask = mask_h & mask_w
-    return keypoints[mask], scores[mask]
-
-
-def top_k_keypoints(keypoints: torch.Tensor, scores: torch.Tensor, k: int):
-    kpts_len = torch.tensor(keypoints.shape[0])  # Still dynamic despite trace warning
-    max_keypoints = torch.minimum(torch.tensor(k), kpts_len)
-    scores, indices = torch.topk(scores, max_keypoints, dim=0)
-    return keypoints[indices], scores
+@torch.jit.script_if_tracing
+def top_k_keypoints(
+    keypoints: torch.Tensor, scores: torch.Tensor, k: int
+) -> tuple[torch.Tensor, torch.Tensor]:
+    if k >= keypoints.shape[0]:
+        return keypoints, scores
+    else:
+        scores, indices = torch.topk(scores, k, dim=0, sorted=True)
+        return keypoints[indices], scores
 
 
 def sample_descriptors(keypoints, descriptors, s: int = 8):
@@ -118,7 +117,7 @@ class SuperPoint(nn.Module):
 
     def __init__(self, **conf):
         super().__init__()
-        self.config = {**self.default_config, **conf}
+        self.conf = {**self.default_config, **conf}
 
         self.relu = nn.ReLU(inplace=True)
         self.pool = nn.MaxPool2d(kernel_size=2, stride=2)
@@ -138,13 +137,13 @@ class SuperPoint(nn.Module):
 
         self.convDa = nn.Conv2d(c4, c5, kernel_size=3, stride=1, padding=1)
         self.convDb = nn.Conv2d(
-            c5, self.config["descriptor_dim"], kernel_size=1, stride=1, padding=0
+            c5, self.conf["descriptor_dim"], kernel_size=1, stride=1, padding=0
         )
 
         url = "https://github.com/cvg/LightGlue/releases/download/v0.1_arxiv/superpoint_v1.pth"
         self.load_state_dict(torch.hub.load_state_dict_from_url(url))
 
-        mk = self.config["max_num_keypoints"]
+        mk = self.conf["max_num_keypoints"]
         if mk is not None and mk <= 0:
             raise ValueError('"max_num_keypoints" must be positive or None')
 
@@ -172,38 +171,39 @@ class SuperPoint(nn.Module):
         cPa = self.relu(self.convPa(x))
         scores = self.convPb(cPa)
         scores = torch.nn.functional.softmax(scores, 1)[:, :-1]
-        b, _, h, w = scores.shape
-        scores = scores.permute(0, 2, 3, 1).reshape(b, h, w, 8, 8)
-        scores = scores.permute(0, 1, 3, 2, 4).reshape(b, h * 8, w * 8)
-        scores = simple_nms(scores, self.config["nms_radius"])
+        _, _, h, w = scores.shape
+        scores = scores.permute(0, 2, 3, 1).reshape(1, h, w, 8, 8)
+        scores = scores.permute(0, 1, 3, 2, 4).reshape(1, h * 8, w * 8)
+        scores = simple_nms(scores, self.conf["nms_radius"])
 
         # scores.shape == (B, H, W)
+
+        # Discard keypoints near the image borders
+        if pad := self.conf["remove_borders"]:
+            scores[:, :pad] = -1
+            scores[:, :, :pad] = -1
+            scores[:, -pad:] = -1
+            scores[:, :, -pad:] = -1
 
         # Below this, B > 1 is not supported as each image can have a different number of keypoints.
 
         # Extract keypoints
-        keypoints = torch.nonzero(scores > self.config["detection_threshold"])
+        best_kp = torch.where(scores > self.conf["detection_threshold"])
+        scores = scores[best_kp]
 
-        # keypoints.shape == (N, 3)
+        keypoints = torch.stack(best_kp[1:3], dim=-1)
+        # keypoints.shape == (N, 2)
 
-        scores = scores[keypoints.T[0], keypoints.T[1], keypoints.T[2]]
-
-        # scores.shape == (N,)
-
-        # Discard keypoints near the image borders
-        if self.config["remove_borders"] > 0:
-            keypoints, scores = remove_borders(
-                keypoints, scores, self.config["remove_borders"], h * 8, w * 8
-            )
+        # scores.shape == (N)
 
         # Keep the k keypoints with highest score
-        if self.config["max_num_keypoints"] is not None:
+        if self.conf["max_num_keypoints"] is not None:
             keypoints, scores = top_k_keypoints(
-                keypoints, scores, self.config["max_num_keypoints"]
+                keypoints, scores, self.conf["max_num_keypoints"]
             )
 
         # Convert (h, w) to (x, y)
-        keypoints = torch.flip(keypoints[:, 1:], (1,))
+        keypoints = torch.flip(keypoints, (1,))
 
         # keypoints.shape == (N, 2)
 
