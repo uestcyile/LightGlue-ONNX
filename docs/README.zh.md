@@ -9,9 +9,12 @@
 
 支持Open Neural Network Exchange (ONNX)的[LightGlue: Local Feature Matching at Light Speed](https://github.com/cvg/LightGlue)实施。ONNX格式支持不同平台之间的互操作性，并支持多个执行提供程序，同时消除了Python特定的依赖项，比如PyTorch。支持TensorRT和OpenVINO。
 
+> ✨ ***新增功能 - 2023年10月4日:*** Fused LightGlue ONNX模型，通过`onnxruntime>=1.16.0`支持FlashAttention-2。
+
 <p align="center"><a href="https://arxiv.org/abs/2306.13643"><img src="../assets/easy_hard.jpg" alt="LightGlue figure" width=80%></a>
 
-## 更新
+<details>
+<summary>更新</summary>
 
 - **2023年7月19日**: 支持TensorRT。
 - **2023年7月13日**: 支持FlashAttention。
@@ -20,12 +23,13 @@
 - **2023年7月1日**: 支持特征提取`max_num_keypoints`。
 - **2023年6月30日**: 支持DISK特征提取。
 - **2023年6月28日**: 加了端到端SuperPoint+LightGlue转换。
+</details>
 
 ## 🔥 ONNX格式转换
 
-在转换ONNX模型之前，请安装原始LightGlue的[requirements](/requirements.txt)。
+在转换ONNX模型之前，请安装原始LightGlue的[export requirements](/requirements-export.txt)。
 
-将DISK或SuperPoint和LightGlue模型转换为ONNX格式，请运行[`export.py`](/export.py)。提供了两种类型的ONNX转换：独立模型和组合模型(使用`--end2end`，比较方便)。
+将DISK或SuperPoint和LightGlue模型转换为ONNX格式，请运行[`export.py`](/export.py)。提供了两种类型的ONNX转换：独立模型和组合模型。
 
 <details>
 <summary>转换例子</summary>
@@ -37,10 +41,17 @@ python export.py \
   --lightglue_path weights/superpoint_lightglue.onnx \
   --dynamic
 </pre>
+</details>
 
-- 虽然已指定了`--dynamic`，但建议使用适合您用例的图像大小转换。
-- 指定`--mp`使混合精度。
-- 指定`--flash`使FlashAttention。(ONNX格式转换需要安装[Flash Attention](https://github.com/Dao-AILab/flash-attention)，但推理不需要。)
+### 🌠 ONNX模型优化 🎆
+
+尽管ONNXRuntime自动提供开箱即用的[一些优化](https://onnxruntime.ai/docs/performance/model-optimizations/graph-optimizations.html)，但某些专门的算子融合（multi-head attention fusion）必须手动应用。请运行[`optimize.py`](/optimize.py)。在具有足够计算能力的设备上，ONNXRuntime（最低版本`1.16.0`）会将算子分派给FlashAttention-2，从而减少大量关键点的推理时间。
+
+<details>
+<summary>优化例子</summary>
+<pre>
+python optimize.py --input weights/superpoint_lightglue.onnx
+</pre>
 </details>
 
 如果您想立即尝试ONNX运行，可以下载已转换的[ONNX模型](https://github.com/fabio-sim/LightGlue-ONNX/releases)。
@@ -93,17 +104,9 @@ TensorRT推理使用ONNXRuntime的TensorRT Execution Provider。请先安装[Ten
 <details>
 <summary>TensorRT例子</summary>
 <pre>
-python tools/symbolic_shape_infer.py \
-  --input weights/superpoint.onnx \
-  --output weights/superpoint.onnx \
-  --auto_merge<br>
-python tools/symbolic_shape_infer.py \
-  --input weights/superpoint_lightglue.onnx \
-  --output weights/superpoint_lightglue.onnx \
-  --auto_merge<br>
 CUDA_MODULE_LOADING=LAZY && python infer.py \
   --img_paths assets/DSC_0410.JPG assets/DSC_0411.JPG \
-  --lightglue_path weights/superpoint_lightglue.onnx \
+  --lightglue_path weights/superpoint_lightglue_fused_fp16.onnx \
   --extractor_type superpoint \
   --extractor_path weights/superpoint.onnx \
   --trt \
@@ -111,11 +114,11 @@ CUDA_MODULE_LOADING=LAZY && python infer.py \
 </pre>
 </details>
 
-第一次运行时，TensorRT需要一点时间始化`.engine`和`.profile`。后续运行应使用cache。请注意，ONNX模型不应使用`--mp`或`--flash`转换。只支持SuperPoint特征提取。
+第一次运行时，TensorRT需要一点时间始化`.engine`和`.profile`。建议使用TensorRT时传递恒定数量的关键点。
 
 ## 推理时间比较
 
-一般来说，对于比较少数量的特征点，ONNX的速度和PyTorch的差不多。但是，随着特征点数量的增加，在CUDA上PyTorch的速度更快，而在CPU上ONNX的推理速度更快。请参阅[EVALUATION.md](/evaluation/EVALUATION.md)。
+一般来说，自适应PyTorch模型提供了更一致的全面延迟，而融合的ORT模型由于`argmax`运算符的瓶颈，在关键点数量较高时变得更慢。 另一方面，TensorRT Execution Provider可以达到非常低的延迟，但它也是不一致且不可预测的。请参阅[EVALUATION.md](/evaluation/EVALUATION.md)。
 
 <p align="center"><a href="https://github.com/fabio-sim/LightGlue-ONNX/blob/main/evaluation/EVALUATION.md"><img src="../assets/latency.png" alt="Latency Comparison" width=80%></a>
 

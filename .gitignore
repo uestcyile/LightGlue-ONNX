@@ -11,3 +11,5 @@ lightglue/_flash/
 *.onnx
 *.engine
 *.profile
+.vscode
+megadepth_test_1500

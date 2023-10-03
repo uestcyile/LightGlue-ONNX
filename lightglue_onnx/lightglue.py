@@ -1,48 +1,48 @@
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Callable, List, Optional
+from typing import Optional, Tuple
 
 import numpy as np
 import torch
 import torch.nn.functional as F
-from einops import rearrange, repeat
 from torch import nn
-
-try:
-    from flash_attn.modules.mha import FlashCrossAttention
-
-    FOUND_OFFICIAL_FLASH = True
-except ModuleNotFoundError:
-    FOUND_OFFICIAL_FLASH = False
 
 torch.backends.cudnn.deterministic = True
 
 
-def rotate_half(x: torch.Tensor) -> torch.Tensor:
-    x = rearrange(x, "... (d r) -> ... d r", r=2)
-    x1, x2 = x.unbind(dim=-1)
-    x = torch.stack((-x2, x1), dim=-1)
-    return rearrange(x, "... d r -> ... (d r)")
-
-
-def apply_cached_rotary_emb(freqs: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
-    return (t * freqs[0]) + (rotate_half(t) * freqs[1])
+@torch.cuda.amp.custom_fwd(cast_inputs=torch.float32)
+def normalize_keypoints(
+    kpts: torch.Tensor, size: Optional[torch.Tensor] = None
+) -> torch.Tensor:
+    if size is None:
+        size = 1 + kpts.max(-2).values - kpts.min(-2).values
+    elif not isinstance(size, torch.Tensor):
+        size = torch.tensor(size, device=kpts.device, dtype=kpts.dtype)
+    size = size.to(kpts)
+    shift = size / 2
+    scale = size.max(-1).values / 2
+    kpts = (kpts - shift[..., None, :]) / scale[..., None, None]
+    return kpts
 
 
 class LearnableFourierPositionalEncoding(nn.Module):
-    def __init__(self, M: int, dim: int, F_dim: int = None, gamma: float = 1.0) -> None:
+    def __init__(self, M: int, head_dim: int, gamma: float = 1.0) -> None:
         super().__init__()
-        F_dim = F_dim if F_dim is not None else dim
+        self.head_dim = head_dim
         self.gamma = gamma
-        self.Wr = nn.Linear(M, F_dim // 2, bias=False)
+        self.Wr = nn.Linear(M, head_dim // 2, bias=False)
         nn.init.normal_(self.Wr.weight.data, mean=0, std=self.gamma**-2)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """encode position vector"""
         projected = self.Wr(x)
         cosines, sines = torch.cos(projected), torch.sin(projected)
-        emb = torch.stack([cosines, sines], 0).unsqueeze(-3)
-        return repeat(emb, "... n -> ... (n r)", r=2)
+        emb = torch.stack([cosines, sines], 0).unsqueeze(-1)
+        # emb.shape == (2, 1, N, 32, 1)
+        emb = torch.cat((emb, emb), dim=-1)
+        # emb.shape == (2, 1, N, 32, 2)
+        emb = emb.reshape(2, 1, 1, -1, self.head_dim)
+        return emb
 
 
 class TokenConfidence(nn.Module):
@@ -53,57 +53,28 @@ class TokenConfidence(nn.Module):
     def forward(self, desc0: torch.Tensor, desc1: torch.Tensor):
         """get confidence tokens"""
         return (
-            self.token(desc0.detach().float()).squeeze(-1),
-            self.token(desc1.detach().float()).squeeze(-1),
+            self.token(desc0.detach()).squeeze(-1),
+            self.token(desc1.detach()).squeeze(-1),
         )
 
 
-class FastAttention(nn.Module):
-    def __init__(self, dim: int) -> None:
+class Attention(nn.Module):
+    def __init__(self) -> None:
         super().__init__()
-        self.s = dim**-0.5
 
     def forward(self, q, k, v) -> torch.Tensor:
-        if (
-            hasattr(F, "scaled_dot_product_attention")
-            and not torch.is_autocast_enabled()
-        ):
-            q, k, v = [x.contiguous() for x in [q, k, v]]
-            return F.scaled_dot_product_attention(q, k, v)
-        else:
-            s = self.s
-            attn = F.softmax(torch.einsum("bnid,bnjd->bnij", q, k) * s, -1)
-            return torch.einsum("bnij,bnjd->bnid", attn, v)
+        return F.scaled_dot_product_attention(q, k, v)
 
 
-class FlashAttention(nn.Module):
-    def __init__(self, *args) -> None:
-        super().__init__()
-        if FOUND_OFFICIAL_FLASH:
-            self.flash = FlashCrossAttention()
-
-    def forward(self, q, k, v) -> torch.Tensor:
-        if FOUND_OFFICIAL_FLASH:
-            q, k, v = [x.transpose(-2, -3) for x in [q, k, v]]
-            m = self.flash(q.half(), torch.stack([k, v], 2).half())
-            return m.transpose(-2, -3).to(q.dtype)
-        else:
-            args = [x.half().contiguous() for x in [q, k, v]]
-            return F.scaled_dot_product_attention(*args).to(q.dtype)
-
-
-class Transformer(nn.Module):
-    def __init__(
-        self, embed_dim: int, num_heads: int, flash: bool = False, bias: bool = True
-    ) -> None:
+class SelfBlock(nn.Module):
+    def __init__(self, embed_dim: int, num_heads: int, bias: bool = True) -> None:
         super().__init__()
         self.embed_dim = embed_dim
         self.num_heads = num_heads
-        assert self.embed_dim % num_heads == 0
-        self.head_dim = self.embed_dim // num_heads
+        self.head_dim = embed_dim // num_heads
+        self.batch = 1
         self.Wqkv = nn.Linear(embed_dim, 3 * embed_dim, bias=bias)
-        attn = FlashAttention if flash else FastAttention
-        self.inner_attn = attn(self.head_dim)
+        self.inner_attn = Attention()
         self.out_proj = nn.Linear(embed_dim, embed_dim, bias=bias)
         self.ffn = nn.Sequential(
             nn.Linear(2 * embed_dim, 2 * embed_dim),
@@ -112,35 +83,43 @@ class Transformer(nn.Module):
             nn.Linear(2 * embed_dim, embed_dim),
         )
 
-    def _forward(self, x: torch.Tensor, encoding: Optional[torch.Tensor] = None):
-        qkv = self.Wqkv(x)
-        qkv = rearrange(
-            qkv, "b n (h d three) -> b h n d three", three=3, h=self.num_heads
-        )
+    def forward(self, x: torch.Tensor, encoding: torch.Tensor) -> torch.Tensor:
+        qkv: torch.Tensor = self.Wqkv(x)
+        qkv = qkv.reshape(self.batch, -1, self.num_heads, self.head_dim, 3)
+        qkv = qkv.transpose(1, 2)
         q, k, v = qkv[..., 0], qkv[..., 1], qkv[..., 2]
-        if encoding is not None:
-            q = apply_cached_rotary_emb(encoding, q)
-            k = apply_cached_rotary_emb(encoding, k)
+        q = self.apply_cached_rotary_emb(encoding, q)
+        k = self.apply_cached_rotary_emb(encoding, k)
         context = self.inner_attn(q, k, v)
-        message = self.out_proj(rearrange(context, "b h n d -> b n (h d)"))
-        return x + self.ffn(torch.cat([x, message], -1))
+        # context.shape == (1, 4, N, 64)
+        context = context.transpose(1, 2)
+        context = context.reshape(self.batch, -1, self.embed_dim)
+        message = self.out_proj(context)
+        return x + self.ffn(torch.cat((x, message), -1))
 
-    def forward(self, x0, x1, encoding0=None, encoding1=None):
-        return self._forward(x0, encoding0), self._forward(x1, encoding1)
+    def rotate_half(self, t: torch.Tensor) -> torch.Tensor:
+        t = t.reshape(self.batch, self.num_heads, -1, self.head_dim // 2, 2)
+        t = torch.stack((-t[..., 1], t[..., 0]), dim=-1)
+        t = t.reshape(self.batch, self.num_heads, -1, self.head_dim)
+        return t
+
+    def apply_cached_rotary_emb(
+        self, freqs: torch.Tensor, t: torch.Tensor
+    ) -> torch.Tensor:
+        return (t * freqs[0]) + (self.rotate_half(t) * freqs[1])
 
 
-class CrossTransformer(nn.Module):
-    def __init__(
-        self, embed_dim: int, num_heads: int, flash: bool = False, bias: bool = True
-    ) -> None:
+class CrossBlock(nn.Module):
+    def __init__(self, embed_dim: int, num_heads: int, bias: bool = True) -> None:
         super().__init__()
-        self.heads = num_heads
-        dim_head = embed_dim // num_heads
-        self.scale = dim_head**-0.5
-        inner_dim = dim_head * num_heads
-        self.to_qk = nn.Linear(embed_dim, inner_dim, bias=bias)
-        self.to_v = nn.Linear(embed_dim, inner_dim, bias=bias)
-        self.to_out = nn.Linear(inner_dim, embed_dim, bias=bias)
+        self.embed_dim = embed_dim
+        self.num_heads = num_heads
+        self.head_dim = embed_dim // num_heads
+        self.batch = 1
+        self.to_qk = nn.Linear(embed_dim, embed_dim, bias=bias)
+        self.to_v = nn.Linear(embed_dim, embed_dim, bias=bias)
+        self.inner_attn = Attention()
+        self.to_out = nn.Linear(embed_dim, embed_dim, bias=bias)
         self.ffn = nn.Sequential(
             nn.Linear(2 * embed_dim, 2 * embed_dim),
             nn.LayerNorm(2 * embed_dim, elementwise_affine=True),
@@ -148,75 +127,97 @@ class CrossTransformer(nn.Module):
             nn.Linear(2 * embed_dim, embed_dim),
         )
 
-        if flash:
-            self.flash = FastAttention(dim_head)
-        else:
-            self.flash = None
-
-    def map_(self, func: Callable, x0: torch.Tensor, x1: torch.Tensor):
-        return func(x0), func(x1)
-
-    def forward(self, x0: torch.Tensor, x1: torch.Tensor) -> List[torch.Tensor]:
-        qk0, qk1 = self.map_(self.to_qk, x0, x1)
-        v0, v1 = self.map_(self.to_v, x0, x1)
+    def forward(self, x0: torch.Tensor, x1: torch.Tensor) -> Tuple[torch.Tensor]:
+        qk0, qk1 = map(self.to_qk, (x0, x1))
+        v0, v1 = map(self.to_v, (x0, x1))
         qk0, qk1, v0, v1 = map(
-            lambda t: rearrange(t, "b n (h d) -> b h n d", h=self.heads),
+            lambda t: t.reshape(
+                self.batch, -1, self.num_heads, self.head_dim
+            ).transpose(1, 2),
             (qk0, qk1, v0, v1),
         )
-        if self.flash is not None:
-            m0 = self.flash(qk0, qk1, v1)
-            m1 = self.flash(qk1, qk0, v0)
-        else:
-            qk0, qk1 = qk0 * self.scale**0.5, qk1 * self.scale**0.5
-            sim = torch.einsum("b h i d, b h j d -> b h i j", qk0, qk1)
-            attn01 = F.softmax(sim, dim=-1)
-            attn10 = F.softmax(sim.transpose(-2, -1).contiguous(), dim=-1)
-            m0 = torch.einsum("bhij, bhjd -> bhid", attn01, v1)
-            m1 = torch.einsum("bhji, bhjd -> bhid", attn10.transpose(-2, -1), v0)
-        m0, m1 = self.map_(lambda t: rearrange(t, "b h n d -> b n (h d)"), m0, m1)
-        m0, m1 = self.map_(self.to_out, m0, m1)
+
+        m0 = self.inner_attn(qk0, qk1, v1)
+        m1 = self.inner_attn(qk1, qk0, v0)
+
+        m0, m1 = map(
+            lambda t: t.transpose(1, 2).reshape(self.batch, -1, self.embed_dim),
+            (m0, m1),
+        )
+        m0, m1 = map(self.to_out, (m0, m1))
         x0 = x0 + self.ffn(torch.cat([x0, m0], -1))
         x1 = x1 + self.ffn(torch.cat([x1, m1], -1))
         return x0, x1
+
+
+class TransformerLayer(nn.Module):
+    def __init__(self, embed_dim: int, num_heads: int):
+        super().__init__()
+        self.self_attn = SelfBlock(embed_dim, num_heads)
+        self.cross_attn = CrossBlock(embed_dim, num_heads)
+
+    def forward(
+        self,
+        desc0: torch.Tensor,
+        desc1: torch.Tensor,
+        encoding0: torch.Tensor,
+        encoding1: torch.Tensor,
+    ) -> Tuple[torch.Tensor]:
+        desc0 = self.self_attn(desc0, encoding0)
+        desc1 = self.self_attn(desc1, encoding1)
+        return self.cross_attn(desc0, desc1)
 
 
 def sigmoid_log_double_softmax(
     sim: torch.Tensor, z0: torch.Tensor, z1: torch.Tensor
 ) -> torch.Tensor:
     """create the log assignment matrix from logits and similarity"""
-    b, m, n = sim.shape
     certainties = F.logsigmoid(z0) + F.logsigmoid(z1).transpose(1, 2)
     scores0 = F.log_softmax(sim, 2)
-    scores1 = F.log_softmax(sim.transpose(-1, -2).contiguous(), 2).transpose(-1, -2)
-    scores = sim.new_full((b, m + 1, n + 1), 0)
-    scores[:, :m, :n] = scores0 + scores1 + certainties
-    scores[:, :-1, -1] = F.logsigmoid(-z0.squeeze(-1))
-    scores[:, -1, :-1] = F.logsigmoid(-z1.squeeze(-1))
+    scores1 = F.log_softmax(sim, 1)
+    scores = scores0 + scores1 + certainties
     return scores
 
 
 class MatchAssignment(nn.Module):
-    def __init__(self, dim: float) -> None:
+    def __init__(self, dim: int) -> None:
         super(MatchAssignment, self).__init__()
         self.dim = dim
-        self.matchability = nn.Linear(dim, 1, bias=True)
+        self.scale = dim**0.25
         self.final_proj = nn.Linear(dim, dim, bias=True)
+        self.matchability = nn.Linear(dim, 1, bias=True)
 
-    def forward(self, desc0: torch.Tensor, desc1: torch.Tensor):
+    def forward(self, desc0: torch.Tensor, desc1: torch.Tensor) -> torch.Tensor:
         """build assignment matrix from descriptors"""
-        mdesc0, mdesc1 = self.final_proj(desc0), self.final_proj(desc1)
-        _, _, d = mdesc0.shape
-        mdesc0, mdesc1 = mdesc0 / d**0.25, mdesc1 / d**0.25
-        sim = torch.einsum("bmd,bnd->bmn", mdesc0, mdesc1)
+        mdesc0, mdesc1 = map(self.final_proj, (desc0, desc1))
+        mdesc0, mdesc1 = map(lambda t: t / self.scale, (mdesc0, mdesc1))
+        sim = mdesc0 @ mdesc1.transpose(1, 2)
         z0 = self.matchability(desc0)
         z1 = self.matchability(desc1)
         scores = sigmoid_log_double_softmax(sim, z0, z1)
-        return scores, sim
+        return scores
 
-    def scores(self, desc0: torch.Tensor, desc1: torch.Tensor):
-        m0 = torch.sigmoid(self.matchability(desc0)).squeeze(-1)
-        m1 = torch.sigmoid(self.matchability(desc1)).squeeze(-1)
-        return m0, m1
+    def get_matchability(self, desc: torch.Tensor):
+        return torch.sigmoid(self.matchability(desc)).squeeze(-1)
+
+
+def filter_matches(scores: torch.Tensor, th: float):
+    """obtain matches from a log assignment matrix [BxMxN]"""
+    max0, max1 = scores.max(2), scores.max(1)
+    m0, m1 = max0.indices, max1.indices
+    indices0 = torch.arange(m0.shape[1], device=m0.device)[None]
+    indices1 = torch.arange(m1.shape[1], device=m1.device)[None]
+    mutual0 = indices0 == m1.gather(1, m0)
+    mutual1 = indices1 == m0.gather(1, m1)
+    max0_exp = max0.values.exp()
+    zero = max0_exp.new_tensor(0)
+    mscores0 = torch.where(mutual0, max0_exp, zero)
+    mscores1 = torch.where(mutual1, mscores0.gather(1, m1), zero)
+    valid0 = mutual0 & (mscores0 > th)
+    valid1 = mutual1 & valid0.gather(1, m1)
+    m0 = torch.where(valid0, m0, -1)
+    m1 = torch.where(valid1, m1, -1)
+    return m0, m1, mscores0, mscores1
 
 
 class LightGlue(nn.Module):
@@ -226,30 +227,26 @@ class LightGlue(nn.Module):
         "descriptor_dim": 256,
         "n_layers": 9,
         "num_heads": 4,
-        "flash": False,  # enable FlashAttention
-        "mp": False,  # enable mixed precision
         "filter_threshold": 0.1,  # match threshold
         "depth_confidence": -1,  # -1 is no early stopping, recommend: 0.95
         "width_confidence": -1,  # -1 is no point pruning, recommend: 0.99
         "weights": None,
     }
 
-    required_data_keys = ["keypoints0", "keypoints1", "descriptors0", "descriptors1"]
-
     version = "v0.1_arxiv"
     url = "https://github.com/cvg/LightGlue/releases/download/{}/{}_lightglue.pth"
 
-    pretrained = {
+    features = {
         "superpoint": ("superpoint_lightglue", 256),
         "disk": ("disk_lightglue", 128),
     }
 
-    def __init__(self, pretrained="superpoint", **conf) -> None:
+    def __init__(self, features="superpoint", **conf) -> None:
         super().__init__()
         self.conf = {**self.default_conf, **conf}
-        if pretrained is not None:
-            assert pretrained in list(self.pretrained.keys())
-            self.conf["weights"], self.conf["input_dim"] = self.pretrained[pretrained]
+        if features is not None:
+            assert features in self.features
+            self.conf["weights"], self.conf["input_dim"] = self.features[features]
         self.conf = conf = SimpleNamespace(**self.conf)
 
         if conf.input_dim != conf.descriptor_dim:
@@ -258,30 +255,40 @@ class LightGlue(nn.Module):
             self.input_proj = nn.Identity()
 
         head_dim = conf.descriptor_dim // conf.num_heads
-        self.posenc = LearnableFourierPositionalEncoding(2, head_dim, head_dim)
+        self.posenc = LearnableFourierPositionalEncoding(2, head_dim)
 
         h, n, d = conf.num_heads, conf.n_layers, conf.descriptor_dim
-        self.self_attn = nn.ModuleList(
-            [Transformer(d, h, conf.flash) for _ in range(n)]
-        )
-        self.cross_attn = nn.ModuleList(
-            [CrossTransformer(d, h, conf.flash) for _ in range(n)]
-        )
+
+        self.transformers = nn.ModuleList([TransformerLayer(d, h) for _ in range(n)])
+
         self.log_assignment = nn.ModuleList([MatchAssignment(d) for _ in range(n)])
+
         self.token_confidence = nn.ModuleList(
             [TokenConfidence(d) for _ in range(n - 1)]
         )
+        self.register_buffer(
+            "confidence_thresholds",
+            torch.Tensor([self.confidence_threshold(i) for i in range(n)]),
+        )
 
-        if pretrained is not None:
+        state_dict = None
+        if features is not None:
             fname = f"{conf.weights}_{self.version}.pth".replace(".", "-")
             state_dict = torch.hub.load_state_dict_from_url(
-                self.url.format(self.version, pretrained), file_name=fname
+                self.url.format(self.version, features), file_name=fname
             )
-            self.load_state_dict(state_dict, strict=False)
         elif conf.weights is not None:
             path = Path(__file__).parent
             path = path / "weights/{}.pth".format(self.conf.weights)
             state_dict = torch.load(str(path), map_location="cpu")
+
+        if state_dict is not None:
+            # rename old state dict entries
+            for i in range(n):
+                pattern = f"self_attn.{i}", f"transformers.{i}.self_attn"
+                state_dict = {k.replace(*pattern): v for k, v in state_dict.items()}
+                pattern = f"cross_attn.{i}", f"transformers.{i}.cross_attn"
+                state_dict = {k.replace(*pattern): v for k, v in state_dict.items()}
             self.load_state_dict(state_dict, strict=False)
 
         print("Loaded LightGlue model")
@@ -304,122 +311,92 @@ class LightGlue(nn.Module):
         encoding1 = self.posenc(kpts1)
 
         # GNN + final_proj + assignment
-        ind0 = torch.arange(0, m)[None]
-        ind1 = torch.arange(0, n)[None]
-        prune0 = torch.ones_like(ind0)  # store layer where pruning is detected
-        prune1 = torch.ones_like(ind1)
-        dec, wic = self.conf.depth_confidence, self.conf.width_confidence
-        token0, token1 = None, None
+        do_early_stop = False  # self.conf.depth_confidence > 0
+        do_point_pruning = False  # self.conf.width_confidence > 0
+        if do_point_pruning:
+            ind0 = torch.arange(0, m, device=kpts0.device)[None]
+            ind1 = torch.arange(0, n, device=kpts0.device)[None]
+
         for i in range(self.conf.n_layers):
             # self+cross attention
-            desc0, desc1 = self.self_attn[i](desc0, desc1, encoding0, encoding1)
-            desc0, desc1 = self.cross_attn[i](desc0, desc1)
+            desc0, desc1 = self.transformers[i](desc0, desc1, encoding0, encoding1)
             if i == self.conf.n_layers - 1:
                 continue  # no early stopping or adaptive width at last layer
-            if dec > 0:  # early stopping
+
+            token0, token1 = None, None
+            if do_early_stop:  # early stopping
                 token0, token1 = self.token_confidence[i](desc0, desc1)
-                if self.stop(token0, token1, self.conf_th(i), dec, m + n):
+                if self.check_if_stop(token0[..., :m, :], token1[..., :n, :], i, m + n):
                     break
-            if wic > 0:  # point pruning
-                match0, match1 = self.log_assignment[i].scores(desc0, desc1)
-                mask0 = self.get_mask(token0, match0, self.conf_th(i), 1 - wic)
-                mask1 = self.get_mask(token1, match1, self.conf_th(i), 1 - wic)
-                ind0, ind1 = ind0[mask0][None], ind1[mask1][None]
-                desc0, desc1 = desc0[mask0][None], desc1[mask1][None]
-                if desc0.shape[-2] == 0 or desc1.shape[-2] == 0:
-                    break
-                encoding0 = encoding0[:, :, mask0][:, None]
-                encoding1 = encoding1[:, :, mask1][:, None]
-            prune0[:, ind0] += 1
-            prune1[:, ind1] += 1
 
-        if wic > 0:  # scatter with indices after pruning
-            scores_, _ = self.log_assignment[i](desc0, desc1)
-            dt, dev = scores_.dtype, scores_.device
-            scores = torch.zeros(b, m + 1, n + 1, dtype=dt, device=dev)
-            scores[:, :-1, :-1] = -torch.inf
-            scores[:, ind0[0], -1] = scores_[:, :-1, -1]
-            scores[:, -1, ind1[0]] = scores_[:, -1, :-1]
-            x, y = torch.meshgrid(ind0[0], ind1[0], indexing="ij")
-            scores[:, x, y] = scores_[:, :-1, :-1]
-        else:
-            scores, _ = self.log_assignment[i](desc0, desc1)
+            if do_point_pruning:  # point pruning
+                scores0 = self.log_assignment[i].get_matchability(desc0)
+                prunemask0 = self.get_pruning_mask(token0, scores0, i)
+                keep0 = torch.where(prunemask0)[1]
+                ind0 = ind0.index_select(1, keep0)
+                desc0 = desc0.index_select(1, keep0)
+                encoding0 = encoding0.index_select(-2, keep0)
 
-        m0, m1, mscores0, mscores1 = self.filter_matches(
-            scores, self.conf.filter_threshold
-        )
+                scores1 = self.log_assignment[i].get_matchability(desc1)
+                prunemask1 = self.get_pruning_mask(token1, scores1, i)
+                keep1 = torch.where(prunemask1)[1]
+                ind1 = ind1.index_select(1, keep1)
+                desc1 = desc1.index_select(1, keep1)
+                encoding1 = encoding1.index_select(-2, keep1)
 
-        return m0, m1, mscores0, mscores1
+        # desc0, desc1 = desc0[..., :m, :], desc1[..., :n, :]
+        scores = self.log_assignment[i](desc0, desc1)
+        m0, m1, mscores0, mscores1 = filter_matches(scores, self.conf.filter_threshold)
 
-    def normalize_keypoints(
-        self,
-        kpts: torch.Tensor,
-        image: torch.Tensor,
-    ) -> torch.Tensor:
-        _, _, h, w = image.shape
-        one = kpts.new_tensor(1)
-        size = torch.stack([one * w, one * h])[None]
-        shift = size.float() / 2
-        scale = size.max(1).values.float() / 2
-        kpts = (kpts - shift[:, None]) / scale[:, None, None]
-        return kpts
+        valid = m0[0] > -1
+        m_indices_0 = torch.where(valid)[0]
+        m_indices_1 = m0[0][valid]
+        if do_point_pruning:
+            m_indices_0 = ind0[0, m_indices_0]
+            m_indices_1 = ind1[0, m_indices_1]
 
-    def conf_th(self, i: int) -> float:
+        matches = torch.stack([m_indices_0, m_indices_1], -1)
+        mscores = mscores0[0][valid]
+
+        if do_point_pruning:  # scatter with indices after pruning
+            m0_ = torch.full((b, m), -1, device=m0.device, dtype=m0.dtype)
+            m1_ = torch.full((b, n), -1, device=m1.device, dtype=m1.dtype)
+            m0_[:, ind0] = torch.where(m0 == -1, -1, ind1.gather(1, m0.clamp(min=0)))
+            m1_[:, ind1] = torch.where(m1 == -1, -1, ind0.gather(1, m1.clamp(min=0)))
+            mscores0_ = torch.zeros((b, m), device=mscores0.device)
+            mscores1_ = torch.zeros((b, n), device=mscores1.device)
+            mscores0_[:, ind0] = mscores0
+            mscores1_[:, ind1] = mscores1
+            m0, m1, mscores0, mscores1 = m0_, m1_, mscores0_, mscores1_
+
+        return matches, mscores
+
+    def confidence_threshold(self, layer_index: int) -> float:
         """scaled confidence threshold"""
-        return np.clip(0.8 + 0.1 * np.exp(-4.0 * i / self.conf.n_layers), 0, 1)
+        threshold = 0.8 + 0.1 * np.exp(-4.0 * layer_index / self.conf.n_layers)
+        return np.clip(threshold, 0, 1)
 
-    def get_mask(
+    def get_pruning_mask(
         self,
-        confidence: torch.Tensor,
-        match: torch.Tensor,
-        conf_th: float,
-        match_th: float,
+        confidences: Optional[torch.Tensor],
+        scores: torch.Tensor,
+        layer_index: int,
     ) -> torch.Tensor:
         """mask points which should be removed"""
-        if conf_th and confidence is not None:
-            mask = (
-                torch.where(confidence > conf_th, match, match.new_tensor(1.0))
-                > match_th
-            )
-        else:
-            mask = match > match_th
-        return mask
+        keep = scores > (1 - self.conf.width_confidence)
+        if confidences is not None:  # Low-confidence points are never pruned.
+            keep |= confidences <= self.confidence_thresholds[layer_index]
+        return keep
 
-    def stop(
+    def check_if_stop(
         self,
-        token0: torch.Tensor,
-        token1: torch.Tensor,
-        conf_th: float,
-        inl_th: float,
-        seql: int,
+        confidences0: torch.Tensor,
+        confidences1: torch.Tensor,
+        layer_index: int,
+        num_points: int,
     ) -> torch.Tensor:
         """evaluate stopping condition"""
-        tokens = torch.cat([token0, token1], -1)
-        if conf_th:
-            pos = 1.0 - (tokens < conf_th).float().sum() / seql
-            return pos > inl_th
-        else:
-            return tokens.mean() > inl_th
-
-    def filter_matches(self, scores: torch.Tensor, th: float):
-        """obtain matches from a log assignment matrix [Bx M+1 x N+1]"""
-        max0, max1 = scores[:, :-1, :-1].max(2), scores[:, :-1, :-1].max(1)
-        m0, m1 = max0.indices, max1.indices
-        mutual0 = torch.arange(m0.shape[1], device=scores.device)[None] == m1.gather(
-            1, m0
-        )
-        mutual1 = torch.arange(m1.shape[1], device=scores.device)[None] == m0.gather(
-            1, m1
-        )
-        max0_exp = max0.values.exp()
-        zero = max0_exp.new_tensor(0)
-        mscores0 = torch.where(mutual0, max0_exp, zero)
-        mscores1 = torch.where(mutual1, mscores0.gather(1, m1), zero)
-        if th is not None:
-            valid0 = mutual0 & (mscores0 > th)
-        else:
-            valid0 = mutual0
-        valid1 = mutual1 & valid0.gather(1, m1)
-        m0 = torch.where(valid0, m0, m0.new_tensor(-1))
-        m1 = torch.where(valid1, m1, m1.new_tensor(-1))
-        return m0, m1, mscores0, mscores1
+        confidences = torch.cat([confidences0, confidences1], -1)
+        threshold = self.confidence_thresholds[layer_index]
+        ratio_confident = 1.0 - (confidences < threshold).float().sum() / num_points
+        return ratio_confident > self.conf.depth_confidence

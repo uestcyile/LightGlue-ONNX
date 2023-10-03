@@ -9,23 +9,27 @@
 
 Open Neural Network Exchange (ONNX) compatible implementation of [LightGlue: Local Feature Matching at Light Speed](https://github.com/cvg/LightGlue). The ONNX model format allows for interoperability across different platforms with support for multiple execution providers, and removes Python-specific dependencies such as PyTorch. Supports TensorRT and OpenVINO.
 
+> ✨ ***What's New - 04 October 2023:*** Fused LightGlue ONNX Models with support for FlashAttention-2 via `onnxruntime>=1.16.0`, up to 80% faster inference on long sequence lengths (number of keypoints).
+
 <p align="center"><a href="https://arxiv.org/abs/2306.13643"><img src="assets/easy_hard.jpg" alt="LightGlue figure" width=80%></a>
 
-## Updates
+<details>
+<summary>Changelog</summary>
 
 - **19 July 2023**: Add support for TensorRT.
 - **13 July 2023**: Add support for Flash Attention.
 - **11 July 2023**: Add support for mixed precision.
-- **4 July 2023**: Add inference time comparisons.
-- **1 July 2023**: Add support for extractor `max_num_keypoints`.
+- **04 July 2023**: Add inference time comparisons.
+- **01 July 2023**: Add support for extractor `max_num_keypoints`.
 - **30 June 2023**: Add support for DISK extractor.
 - **28 June 2023**: Add end-to-end SuperPoint+LightGlue export & inference pipeline.
+</details>
 
 ## 🔥 ONNX Export
 
-Prior to exporting the ONNX models, please install the [requirements](/requirements.txt) of the original LightGlue repository.
+Prior to exporting the ONNX models, please install the [export requirements](/requirements-export.txt).
 
-To convert the DISK or SuperPoint and LightGlue models to ONNX, run [`export.py`](/export.py). We provide two types of ONNX exports: individual standalone models, and a combined end-to-end pipeline (recommended for convenience) with the `--end2end` flag.
+To convert the DISK or SuperPoint and LightGlue models to ONNX, run [`export.py`](/export.py). We provide two types of ONNX exports: individual standalone models, and a combined end-to-end pipeline with the `--end2end` flag.
 
 <details>
 <summary>Export Example</summary>
@@ -40,8 +44,17 @@ python export.py \
 
 - Exporting individually can be useful when intermediate outputs can be cached or precomputed. On the other hand, the end-to-end pipeline can be more convenient.
 - Although dynamic axes have been specified, it is recommended to export your own ONNX model with the appropriate input image sizes of your use case.
-- Use the `--mp` option to export in mixed precision for more speed gains.
-- Enable flash attention with the `--flash` option for even faster speeds. ([Flash Attention](https://github.com/Dao-AILab/flash-attention) must be installed for export but is not required during inference.)
+</details>
+
+### 🌠 ONNX Model Optimization 🎆
+
+Although ONNXRuntime automatically provides [some optimizations](https://onnxruntime.ai/docs/performance/model-optimizations/graph-optimizations.html) out of the box, certain specialized operator fusions (multi-head attention fusion) have to be applied manually. Run [`optimize.py`](/optimize.py) to fuse the attention nodes in LightGlue's ONNX graph. On a device with sufficient compute capability, ONNXRuntime (minimum version `1.16.0`) will dispatch the operator to FlashAttention-2, reducing the inference time for larger numbers of keypoints.
+
+<details>
+<summary>Optimize Example</summary>
+<pre>
+python optimize.py --input weights/superpoint_lightglue.onnx
+</pre>
 </details>
 
 If you would like to try out inference right away, you can download ONNX models that have already been exported [here](https://github.com/fabio-sim/LightGlue-ONNX/releases).
@@ -93,22 +106,14 @@ See [OroChippw/LightGlue-OnnxRunner](https://github.com/OroChippw/LightGlue-Onnx
 
 ## 🚀 TensorRT Support
 
-TensorRT inference is supported via the TensorRT Execution Provider in ONNXRuntime. Please follow the [official documentation](https://docs.nvidia.com/deeplearning/tensorrt/install-guide/index.html) to install TensorRT. The exported ONNX models (whether standalone or end-to-end) must undergo [shape inference](/tools/symbolic_shape_infer.py) for compatibility with TensorRT:
+TensorRT inference is supported via the TensorRT Execution Provider in ONNXRuntime. Please follow the [official documentation](https://docs.nvidia.com/deeplearning/tensorrt/install-guide/index.html) to install TensorRT. The exported ONNX models (whether standalone or end-to-end) must undergo [shape inference](/tools/symbolic_shape_infer.py) for compatibility with TensorRT. Note that the `optimize.py` script already does this for you.
 
 <details>
 <summary>TensorRT Example</summary>
 <pre>
-python tools/symbolic_shape_infer.py \
-  --input weights/superpoint.onnx \
-  --output weights/superpoint.onnx \
-  --auto_merge<br>
-python tools/symbolic_shape_infer.py \
-  --input weights/superpoint_lightglue.onnx \
-  --output weights/superpoint_lightglue.onnx \
-  --auto_merge<br>
 CUDA_MODULE_LOADING=LAZY && python infer.py \
   --img_paths assets/DSC_0410.JPG assets/DSC_0411.JPG \
-  --lightglue_path weights/superpoint_lightglue.onnx \
+  --lightglue_path weights/superpoint_lightglue_fused_fp16.onnx \
   --extractor_type superpoint \
   --extractor_path weights/superpoint.onnx \
   --trt \
@@ -116,11 +121,11 @@ CUDA_MODULE_LOADING=LAZY && python infer.py \
 </pre>
 </details>
 
-The first run will take longer because TensorRT needs to initialise the `.engine` and `.profile` files. It is recommended to pass the options [here](/evaluation/EVALUATION.md#tensorrt) to ONNXRuntime. Subsequent runs should use the cached files. Note that the ONNX models should not be exported with `--mp` or `--flash`. Only the SuperPoint extractor type is supported.
+The first run will take longer because TensorRT needs to initialise the `.engine` and `.profile` files. It is recommended to pass a static number of keypoints when using TensorRT.
 
 ## ⏱️ Inference Time Comparison
 
-In general, for smaller numbers of keypoints the ONNX version performs similarly to the PyTorch implementation. However, as the number of keypoints increases, the PyTorch CUDA implementation is faster, whereas ONNX is faster overall for CPU inference. See [EVALUATION.md](/evaluation/EVALUATION.md) for technical details.
+In general, the adaptive PyTorch model provides more consistent latencies across the board, while the fused ORT models become slower at higher keypoint numbers due to a bottleneck in the `argmax` operator. On the other hand, the TensorRT Execution Provider can reach very low latencies, but it is also inconsistent and unpredictable. See [EVALUATION.md](/evaluation/EVALUATION.md) for technical details.
 
 <p align="center"><a href="https://github.com/fabio-sim/LightGlue-ONNX/blob/main/evaluation/EVALUATION.md"><img src="assets/latency.png" alt="Latency Comparison" width=90%></a>
 
@@ -135,7 +140,7 @@ As the ONNX Runtime has limited support for features like dynamic control flow, 
 ### LightGlue Keypoint Matching
 
 - Since dynamic control flow has limited support in ONNX tracing, by extension, early stopping and adaptive point pruning (the `depth_confidence` and `width_confidence` parameters) are also difficult to export to ONNX.
-- Note that the end-to-end version, despite its name, still requires the postprocessing (filtering valid matches) function outside the ONNX model since the `scales` variables need to be passed.
+- Currently, the bottleneck for inference speed under ONNXRuntime is the `argmax` operator, which is placed on the CPU because it is unsupported by the CUDA Execution Provider.
 
 Additionally, the outputs of the ONNX models differ slightly from the original PyTorch models (by a small error on the magnitude of `1e-6` to `1e-5` for the scores/descriptors). Although the cause is still unclear, this could be due to differing implementations or modified dtypes.
 
@@ -143,9 +148,7 @@ Note that SuperPoint is under a non-commercial license.
 
 ## Possible Future Work
 
-- **Support for batch size > 1**: Blocked by the fact that different images can have varying numbers of keypoints. Perhaps max-length padding?
-- **Support for dynamic control flow**: Investigating *script-mode* ONNX export instead of *trace-mode*.
-- **Quantization Support**
+- **Support for dynamic control flow**: Investigating FX-graph/dynamo-based ONNX exporter instead of tracing/TorchScript-based ONNX exporter.
 
 ## Credits
 If you use any ideas from the papers or code in this repo, please consider citing the authors of [LightGlue](https://arxiv.org/abs/2306.13643) and [SuperPoint](https://arxiv.org/abs/1712.07629) and [DISK](https://arxiv.org/abs/2006.13566). Lastly, if the ONNX versions helped you in any way, please also consider starring this repository.
