@@ -72,7 +72,7 @@ def simple_nms(scores, nms_radius: int):
 @torch.jit.script_if_tracing
 def top_k_keypoints(
     keypoints: torch.Tensor, scores: torch.Tensor, k: int
-) -> tuple[torch.Tensor, torch.Tensor]:
+) -> Tuple[torch.Tensor, torch.Tensor]:
     if k >= keypoints.shape[0]:
         return keypoints, scores
     else:
