@@ -211,6 +211,7 @@ class FusionAttentionLightGlue(Fusion):
     ) -> NodeProto:
         # all_inputs are (B, N, S, H)
         if self.enable_packed_qkv:
+            # Implement Stack via Unsqueeze+Concat
             unsqueeze_q_node_name = self.model.create_node_name("Unsqueeze")
             unsqueeze_k_node_name = self.model.create_node_name("Unsqueeze")
             unsqueeze_v_node_name = self.model.create_node_name("Unsqueeze")
@@ -297,8 +298,98 @@ class FusionAttentionLightGlue(Fusion):
             )
 
             return attention_node
-        else:  # Not packed
-            raise NotImplementedError("Unpacked QKV self-attention not implemented.")
+        else:  # Not packed. (CPU-compatible)
+            # Transpose nodes: (B, N, S, H) -> (B, S, N, H)
+            transpose_q_node_name = self.model.create_node_name("Transpose")
+            transpose_k_node_name = self.model.create_node_name("Transpose")
+            transpose_v_node_name = self.model.create_node_name("Transpose")
+            transpose_q_node = helper.make_node(
+                "Transpose",
+                inputs=[matmul_q.output[0]],
+                outputs=[transpose_q_node_name + "_out"],
+                name=transpose_q_node_name,
+                perm=[0, 2, 1, 3],
+            )
+            self.node_name_to_graph_name[transpose_q_node.name] = self.this_graph_name
+            transpose_k_node = helper.make_node(
+                "Transpose",
+                inputs=[matmul_k.output[0]],
+                outputs=[transpose_k_node_name + "_out"],
+                name=transpose_k_node_name,
+                perm=[0, 2, 1, 3],
+            )
+            self.node_name_to_graph_name[transpose_k_node.name] = self.this_graph_name
+            transpose_v_node = helper.make_node(
+                "Transpose",
+                inputs=[matmul_v.output[0]],
+                outputs=[transpose_v_node_name + "_out"],
+                name=transpose_v_node_name,
+                perm=[0, 2, 1, 3],
+            )
+            self.node_name_to_graph_name[transpose_v_node.name] = self.this_graph_name
+
+            # Reshape nodes: (B, S, N, H) -> (B, S, NH)
+            reshape_q_node_name = self.model.create_node_name("Reshape")
+            reshape_k_node_name = self.model.create_node_name("Reshape")
+            reshape_v_node_name = self.model.create_node_name("Reshape")
+            for n in (reshape_q_node_name, reshape_k_node_name, reshape_v_node_name):
+                self.add_initializer(
+                    name=n + "_shape",
+                    data_type=TensorProto.INT64,
+                    dims=[3],
+                    vals=[0, 0, hidden_size],
+                    raw=False,
+                )
+            reshape_q_node = helper.make_node(
+                "Reshape",
+                inputs=[transpose_q_node_name + "_out", reshape_q_node_name + "_shape"],
+                outputs=[reshape_q_node_name + "_out"],
+                name=reshape_q_node_name,
+            )
+            self.node_name_to_graph_name[reshape_q_node.name] = self.this_graph_name
+            reshape_k_node = helper.make_node(
+                "Reshape",
+                inputs=[transpose_k_node_name + "_out", reshape_k_node_name + "_shape"],
+                outputs=[reshape_k_node_name + "_out"],
+                name=reshape_k_node_name,
+            )
+            self.node_name_to_graph_name[reshape_k_node.name] = self.this_graph_name
+            reshape_v_node = helper.make_node(
+                "Reshape",
+                inputs=[transpose_v_node_name + "_out", reshape_v_node_name + "_shape"],
+                outputs=[reshape_v_node_name + "_out"],
+                name=reshape_v_node_name,
+            )
+            self.node_name_to_graph_name[reshape_v_node.name] = self.this_graph_name
+
+            self.nodes_to_add.extend(
+                [
+                    transpose_q_node,
+                    transpose_k_node,
+                    transpose_v_node,
+                    reshape_q_node,
+                    reshape_k_node,
+                    reshape_v_node,
+                ]
+            )
+
+            attention_inputs = [
+                reshape_q_node_name + "_out",
+                reshape_k_node_name + "_out",
+                reshape_v_node_name + "_out",
+            ]
+
+            attention_node_name = self.model.create_node_name("MultiHeadAttention")
+            attention_node = helper.make_node(
+                "MultiHeadAttention",
+                inputs=attention_inputs,
+                outputs=[output],
+                name=attention_node_name,
+                domain="com.microsoft",
+                num_heads=num_heads,
+            )
+
+            return attention_node
 
     def create_cross_attention_node(
         self,
