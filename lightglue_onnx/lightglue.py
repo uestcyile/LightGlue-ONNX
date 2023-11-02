@@ -203,21 +203,29 @@ class MatchAssignment(nn.Module):
 
 def filter_matches(scores: torch.Tensor, th: float):
     """obtain matches from a log assignment matrix [BxMxN]"""
-    max0, max1 = scores.max(2), scores.max(1)
-    m0, m1 = max0.indices, max1.indices
+    max0 = torch.topk(scores, k=1, dim=2, sorted=False)  # scores.max(2)
+    max1 = torch.topk(scores, k=1, dim=1, sorted=False)  # scores.max(1)
+    m0, m1 = max0.indices[:, :, 0], max1.indices[:, 0, :]
     indices0 = torch.arange(m0.shape[1], device=m0.device)[None]
-    indices1 = torch.arange(m1.shape[1], device=m1.device)[None]
+    # indices1 = torch.arange(m1.shape[1], device=m1.device)[None]
     mutual0 = indices0 == m1.gather(1, m0)
-    mutual1 = indices1 == m0.gather(1, m1)
-    max0_exp = max0.values.exp()
+    # mutual1 = indices1 == m0.gather(1, m1)
+    max0_exp = max0.values[:, :, 0].exp()
     zero = max0_exp.new_tensor(0)
     mscores0 = torch.where(mutual0, max0_exp, zero)
-    mscores1 = torch.where(mutual1, mscores0.gather(1, m1), zero)
-    valid0 = mutual0 & (mscores0 > th)
-    valid1 = mutual1 & valid0.gather(1, m1)
-    m0 = torch.where(valid0, m0, -1)
-    m1 = torch.where(valid1, m1, -1)
-    return m0, m1, mscores0, mscores1
+    # mscores1 = torch.where(mutual1, mscores0.gather(1, m1), zero)
+    valid0 = mscores0 > th
+    # valid1 = mutual1 & valid0.gather(1, m1)
+    # m0 = torch.where(valid0, m0, -1)
+    # m1 = torch.where(valid1, m1, -1)
+    # return m0, m1, mscores0, mscores1
+
+    m_indices_0 = indices0[valid0]
+    m_indices_1 = m0[0][m_indices_0]
+
+    matches = torch.stack([m_indices_0, m_indices_1], -1)
+    mscores = mscores0[0][m_indices_0]
+    return matches, mscores
 
 
 class LightGlue(nn.Module):
@@ -346,6 +354,9 @@ class LightGlue(nn.Module):
 
         # desc0, desc1 = desc0[..., :m, :], desc1[..., :n, :]
         scores = self.log_assignment[i](desc0, desc1)
+        matches, mscores = filter_matches(scores, self.conf.filter_threshold)
+        return matches, mscores
+        # Skip unnecessary computation
         m0, m1, mscores0, mscores1 = filter_matches(scores, self.conf.filter_threshold)
 
         valid = m0[0] > -1
