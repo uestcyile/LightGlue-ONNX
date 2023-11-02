@@ -16,6 +16,9 @@
 <details>
 <summary>更新</summary>
 
+- **2023年11月02日**: 使用TopK换ArgMax比较快。
+- **2023年10月27日**: Kornia支持LightGlue-ONNX。
+- **2023年10月4日**: Multihead-attention fusion。
 - **2023年7月19日**: 支持TensorRT。
 - **2023年7月13日**: 支持FlashAttention。
 - **2023年7月11日**: 支持混合精度。
@@ -118,7 +121,7 @@ CUDA_MODULE_LOADING=LAZY && python infer.py \
 
 ## 推理时间比较
 
-一般来说，自适应PyTorch模型提供了更一致的全面延迟，而融合的ORT模型由于`argmax`运算符的瓶颈，在关键点数量较高时变得更慢。 另一方面，TensorRT Execution Provider可以达到非常低的延迟，但它也是不一致且不可预测的。请参阅[EVALUATION.md](/evaluation/EVALUATION.md)。
+一般来说，自适应PyTorch模型提供了更一致的全面延迟，而融合的ORT模型由于`NonZero`运算符的瓶颈，在关键点数量较高时变得更慢。 另一方面，TensorRT Execution Provider可以达到非常低的延迟，但它也是不一致且不可预测的。请参阅[EVALUATION.md](/evaluation/EVALUATION.md)。
 
 <p align="center"><a href="https://github.com/fabio-sim/LightGlue-ONNX/blob/main/evaluation/EVALUATION.md"><img src="../assets/latency.png" alt="Latency Comparison" width=80%></a>
 

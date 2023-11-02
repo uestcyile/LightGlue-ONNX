@@ -16,6 +16,9 @@ Open Neural Network Exchange (ONNX) compatible implementation of [LightGlue: Loc
 <details>
 <summary>Changelog</summary>
 
+- **02 November 2023**: Introduce TopK-trick to optimize out ArgMax for about 30% speedup.
+- **27 October 2023**: LightGlue-ONNX added to [Kornia](https://kornia.readthedocs.io/en/latest/feature.html#kornia.feature.OnnxLightGlue)!
+- **04 October 2023**: Multihead-attention fusion optimization.
 - **19 July 2023**: Add support for TensorRT.
 - **13 July 2023**: Add support for Flash Attention.
 - **11 July 2023**: Add support for mixed precision.
@@ -125,7 +128,7 @@ The first run will take longer because TensorRT needs to initialise the `.engine
 
 ## ⏱️ Inference Time Comparison
 
-In general, the adaptive PyTorch model provides more consistent latencies across the board, while the fused ORT models become slower at higher keypoint numbers due to a bottleneck in the `argmax` operator. On the other hand, the TensorRT Execution Provider can reach very low latencies, but it is also inconsistent and unpredictable. See [EVALUATION.md](/evaluation/EVALUATION.md) for technical details.
+In general, the fused ORT models can match the speed of the adaptive PyTorch model despite being non-adaptive (going through all attention layers). The PyTorch model provides more consistent latencies across the board, while the fused ORT models become slower at higher keypoint numbers due to a bottleneck in the `NonZero` operator. On the other hand, the TensorRT Execution Provider can reach very low latencies, but it is also inconsistent and unpredictable. See [EVALUATION.md](/evaluation/EVALUATION.md) for technical details.
 
 <p align="center"><a href="https://github.com/fabio-sim/LightGlue-ONNX/blob/main/evaluation/EVALUATION.md"><img src="assets/latency.png" alt="Latency Comparison" width=90%></a>
 
@@ -140,7 +143,7 @@ As the ONNX Runtime has limited support for features like dynamic control flow, 
 ### LightGlue Keypoint Matching
 
 - Since dynamic control flow has limited support in ONNX tracing, by extension, early stopping and adaptive point pruning (the `depth_confidence` and `width_confidence` parameters) are also difficult to export to ONNX.
-- Currently, the bottleneck for inference speed under ONNXRuntime is the `argmax` operator, which is placed on the CPU because it is unsupported by the CUDA Execution Provider.
+- ~~Currently, the bottleneck for inference speed under ONNXRuntime is the `ArgMax` operator, which is placed on the CPU because it is unsupported by the CUDA Execution Provider.~~ Solved using TopK-trick. Now the bottleneck is the `NonZero` operator.
 
 Additionally, the outputs of the ONNX models differ slightly from the original PyTorch models (by a small error on the magnitude of `1e-6` to `1e-5` for the scores/descriptors). Although the cause is still unclear, this could be due to differing implementations or modified dtypes.
 
