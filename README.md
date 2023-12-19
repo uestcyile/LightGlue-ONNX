@@ -109,10 +109,12 @@ See [OroChippw/LightGlue-OnnxRunner](https://github.com/OroChippw/LightGlue-Onnx
 
 ## 🚀 TensorRT Support
 
-TensorRT inference is supported via the TensorRT Execution Provider in ONNXRuntime. Please follow the [official documentation](https://docs.nvidia.com/deeplearning/tensorrt/install-guide/index.html) to install TensorRT. The exported ONNX models (whether standalone or end-to-end) must undergo [shape inference](/tools/symbolic_shape_infer.py) for compatibility with TensorRT. Note that the `optimize.py` script already does this for you.
+TensorRT inference is partially supported via either *pure TensorRT* or the *TensorRT Execution Provider in ONNXRuntime*. Please follow the [official documentation](https://docs.nvidia.com/deeplearning/tensorrt/install-guide/index.html) to install TensorRT. The exported ONNX models (whether standalone or end-to-end) must undergo [shape inference](https://github.com/microsoft/onnxruntime/blob/main/onnxruntime/python/tools/symbolic_shape_infer.py) for compatibility with TensorRT.
+
+For sample code using the TensorRT Python API, see [`trt_infer.py`](/trt_infer.py), which covers building the TensorRT engine and performing inference.
 
 <details>
-<summary>TensorRT Example</summary>
+<summary>TensorRT via ONNXRuntime Example</summary>
 <pre>
 CUDA_MODULE_LOADING=LAZY && python infer.py \
   --img_paths assets/DSC_0410.JPG assets/DSC_0411.JPG \
