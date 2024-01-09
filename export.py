@@ -14,7 +14,7 @@ def parse_args() -> argparse.Namespace:
         "--img_size",
         nargs="+",
         type=int,
-        default=512,
+        default=640,
         required=False,
         help="Sample image size for ONNX tracing. If a single integer is given, resize the longer side of the image to this value. Otherwise, please provide two integers (height width).",
     )
@@ -29,14 +29,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--extractor_path",
         type=str,
-        default=None,
+        default="weights/superpoint.onnx",
         required=False,
         help="Path to save the feature extractor ONNX model.",
     )
     parser.add_argument(
         "--lightglue_path",
         type=str,
-        default=None,
+        default="weights/superpoint_lightglue.onnx",
         required=False,
         help="Path to save the LightGlue ONNX model.",
     )
@@ -53,7 +53,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--max_num_keypoints",
         type=int,
-        default=None,
+        default=512,
         required=False,
         help="Maximum number of keypoints outputted by the extractor.",
     )
@@ -66,8 +66,8 @@ def export_onnx(
     extractor_type="superpoint",
     extractor_path=None,
     lightglue_path=None,
-    img0_path="assets/sacre_coeur1.jpg",
-    img1_path="assets/sacre_coeur2.jpg",
+    img0_path="assets/1699355803784416512.jpg",
+    img1_path="assets/1699355805160020992.jpg",
     end2end=False,
     dynamic=False,
     max_num_keypoints=None,
@@ -104,7 +104,8 @@ def export_onnx(
         image0 = rgb_to_grayscale(image0)
         image1 = rgb_to_grayscale(image1)
         extractor = SuperPoint(max_num_keypoints=max_num_keypoints).eval()
-        lightglue = LightGlue(extractor_type).eval()
+        ckpt_path = "/home/data/3.7T/code/glue-factory/outputs/training/sp-48to128dim+lg_megadepth/checkpoint_best.tar"
+        lightglue = LightGlue(extractor_type, ckpt_path=ckpt_path).eval()
     elif extractor_type == "disk":
         extractor = DISK(max_num_keypoints=max_num_keypoints).eval()
         lightglue = LightGlue(extractor_type).eval()
@@ -168,7 +169,7 @@ def export_onnx(
             extractor_path,
             input_names=["image"],
             output_names=["keypoints", "scores", "descriptors"],
-            opset_version=17,
+            opset_version=13,
             dynamic_axes=dynamic_axes,
         )
 
@@ -186,14 +187,14 @@ def export_onnx(
             lightglue_path,
             input_names=["kpts0", "kpts1", "desc0", "desc1"],
             output_names=["matches0", "mscores0"],
-            opset_version=17,
+            opset_version=13,
             dynamic_axes={
                 "kpts0": {1: "num_keypoints0"},
                 "kpts1": {1: "num_keypoints1"},
                 "desc0": {1: "num_keypoints0"},
                 "desc1": {1: "num_keypoints1"},
-                "matches0": {0: "num_matches0"},
-                "mscores0": {0: "num_matches0"},
+                # "matches0": {0: "num_matches0"},
+                # "mscores0": {0: "num_matches0"},
             },
         )
 

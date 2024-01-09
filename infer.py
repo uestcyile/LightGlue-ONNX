@@ -119,7 +119,7 @@ def infer(
         viz2d.plot_images(
             [orig_image0[0].transpose(1, 2, 0), orig_image1[0].transpose(1, 2, 0)]
         )
-        viz2d.plot_matches(m_kpts0, m_kpts1, color="lime", lw=0.2)
+        viz2d.plot_matches(m_kpts0, m_kpts1, color=None, lw=0.6)
         viz2d.plt.show()
 
     return m_kpts0, m_kpts1

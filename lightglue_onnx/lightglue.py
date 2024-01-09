@@ -1,6 +1,8 @@
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Optional, Tuple
+from collections import OrderedDict
+import os
 
 import numpy as np
 import torch
@@ -63,7 +65,14 @@ class Attention(nn.Module):
         super().__init__()
 
     def forward(self, q, k, v) -> torch.Tensor:
-        return F.scaled_dot_product_attention(q, k, v)
+        use_torch_2p0 = False
+        if use_torch_2p0:
+            return F.scaled_dot_product_attention(q, k, v)
+        else:
+            s = q.shape[-1] ** -0.5
+            sim = torch.einsum("bnid,bnjd->bnij", q, k) * s
+            attn = F.softmax(sim, -1)
+            return torch.einsum("bnij,bnjd->bnid", attn, v)
 
 
 class SelfBlock(nn.Module):
@@ -214,25 +223,29 @@ def filter_matches(scores: torch.Tensor, th: float):
     zero = max0_exp.new_tensor(0)
     mscores0 = torch.where(mutual0, max0_exp, zero)
     # mscores1 = torch.where(mutual1, mscores0.gather(1, m1), zero)
-    valid0 = mscores0 > th
+    # valid0 = mscores0 > th
+    # valid0 = torch.ByteTensor(np.ones((1, 512)))
+    # valid0 = torch.where(mscores0 > th, 1, 0).squeeze()
     # valid1 = mutual1 & valid0.gather(1, m1)
     # m0 = torch.where(valid0, m0, -1)
     # m1 = torch.where(valid1, m1, -1)
     # return m0, m1, mscores0, mscores1
 
-    m_indices_0 = indices0[valid0]
+    m_indices_0 = indices0[0, :] #output all matches
     m_indices_1 = m0[0][m_indices_0]
 
     matches = torch.stack([m_indices_0, m_indices_1], -1)
     mscores = mscores0[0][m_indices_0]
+    # print("matches.shape: ", matches.shape)
+    # print("mscores.shape: ", mscores.shape)
     return matches, mscores
 
 
 class LightGlue(nn.Module):
     default_conf = {
         "name": "lightglue",  # just for interfacing
-        "input_dim": 256,  # input descriptor dimension (autoselected from weights)
-        "descriptor_dim": 256,
+        "input_dim": 48,  # input descriptor dimension (autoselected from weights)
+        "descriptor_dim": 128,
         "n_layers": 9,
         "num_heads": 4,
         "filter_threshold": 0.1,  # match threshold
@@ -245,11 +258,11 @@ class LightGlue(nn.Module):
     url = "https://github.com/cvg/LightGlue/releases/download/{}/{}_lightglue.pth"
 
     features = {
-        "superpoint": ("superpoint_lightglue", 256),
+        "superpoint": ("superpoint_lightglue", 48),
         "disk": ("disk_lightglue", 128),
     }
 
-    def __init__(self, features="superpoint", **conf) -> None:
+    def __init__(self, features="superpoint", ckpt_path = None, **conf) -> None:
         super().__init__()
         self.conf = {**self.default_conf, **conf}
         if features is not None:
@@ -280,7 +293,15 @@ class LightGlue(nn.Module):
         )
 
         state_dict = None
-        if features is not None:
+        if ckpt_path is not None:
+            ckpt = torch.load(ckpt_path, map_location="cpu")
+            all_state_dict = ckpt["model"]
+            state_dict = OrderedDict()
+            for k, v in all_state_dict.items():
+                if k.startswith("matcher"):
+                    new_k = k[8:] # remove prefix "matcher."
+                    state_dict[new_k] = v
+        elif features is not None:
             fname = f"{conf.weights}_{self.version}.pth".replace(".", "-")
             state_dict = torch.hub.load_state_dict_from_url(
                 self.url.format(self.version, features), file_name=fname
@@ -297,6 +318,14 @@ class LightGlue(nn.Module):
                 state_dict = {k.replace(*pattern): v for k, v in state_dict.items()}
                 pattern = f"cross_attn.{i}", f"transformers.{i}.cross_attn"
                 state_dict = {k.replace(*pattern): v for k, v in state_dict.items()}
+            # check params
+            dict_params = set(state_dict.keys())
+            model_params = set(map(lambda n: n[0], self.named_parameters()))
+            diff = model_params - dict_params
+            if len(diff) > 0:
+                subs = os.path.commonprefix(list(diff)).rstrip(".")
+                print(f"[Warning] Missing {len(diff)} parameters in {subs}")
+            # load params to model
             self.load_state_dict(state_dict, strict=False)
 
         print("Loaded LightGlue model")

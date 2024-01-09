@@ -47,8 +47,8 @@ class LightGlueRunner:
             )
             return m_kpts0, m_kpts1
         else:
-            kpts0, scores0, desc0 = self.extractor.run(None, {"image": image0})
-            kpts1, scores1, desc1 = self.extractor.run(None, {"image": image1})
+            scores0, kpts0, desc0 = self.extractor.run(None, {"inputx": image0})
+            scores1, kpts1, desc1 = self.extractor.run(None, {"inputx": image1})
 
             matches0, mscores0 = self.lightglue.run(
                 None,
@@ -64,7 +64,7 @@ class LightGlueRunner:
                 },
             )
             m_kpts0, m_kpts1 = self.post_process(
-                kpts0, kpts1, matches0, scales0, scales1
+                kpts0, kpts1, matches0, scales0, scales1, mscores0
             )
             return m_kpts0, m_kpts1
 
@@ -77,9 +77,14 @@ class LightGlueRunner:
         return kpts.astype(np.float32)
 
     @staticmethod
-    def post_process(kpts0, kpts1, matches, scales0, scales1):
+    def post_process(kpts0, kpts1, matches, scales0, scales1, mscores0=None):
         kpts0 = (kpts0 + 0.5) / scales0 - 0.5
         kpts1 = (kpts1 + 0.5) / scales1 - 0.5
         # create match indices
         m_kpts0, m_kpts1 = kpts0[0][matches[..., 0]], kpts1[0][matches[..., 1]]
-        return m_kpts0, m_kpts1
+        good_match_index = mscores0 > 0.5
+
+        num_total_match = len(m_kpts0)
+        num_good_match = sum(good_match_index)
+        print(f"num_total_match={num_total_match}, good_match_index={num_good_match}")
+        return m_kpts0[good_match_index], m_kpts1[good_match_index]
